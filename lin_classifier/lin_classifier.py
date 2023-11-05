@@ -42,13 +42,16 @@ W = tf.Variable(initial_value=tf.random.uniform(shape=(input_dim, output_dim)))
 # Bias for the model
 b = tf.Variable(initial_value=tf.zeros(shape=(output_dim,)))
 
+"""Predict the output"""
 def model(inputs):
     return tf.matmul(inputs, W) + b
 
+"""Calcualte the loss"""
 def square_loss(targets, predictions):
     per_sample_losses = tf.square(targets - predictions)
     return tf.reduce_mean(per_sample_losses)
 
+"""Tune the weights & biases by one step"""
 def train_one_step(inputs, targets, weights, biases):
     with tf.GradientTape() as tape:
         predictions = model(inputs)
@@ -58,11 +61,7 @@ def train_one_step(inputs, targets, weights, biases):
     biases.assign_sub(grad_loss_wrt_B * learning_rate)
     return loss
 
-def calculate_color(points, predictions, targets):
-    assert points.shape == predictions.shape == targets.shape
-    for i in range(0, predictions.shape[0]):
-        square_loss(targets[i][0],)
-
+"""Update the plot for each frame"""
 def update_plot(i, scat, line):
     # Move one step closer
     loss = train_one_step(inputs, targets, W, b)
@@ -100,5 +99,8 @@ plt.ylim(-2,6)
 
 ani = animation.FuncAnimation(fig, update_plot, frames=range(N*2), interval=100, fargs=(scat, line), repeat=False)
 learning_rate_str = str(learning_rate).replace('.', 'p')
+
+# Uncomment to safe a gif of the animation
 #ani.save(f"lin_classifier_rate_{learning_rate_str}.gif")
+
 plt.show()
