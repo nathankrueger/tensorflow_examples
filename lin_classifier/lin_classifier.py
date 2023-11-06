@@ -1,15 +1,20 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.animation as animation
 
-# How much data to we want to crunch?
+# how much data to we want to crunch?
 N = 30
-num_samples_per_class = 500
+num_samples_per_class = 300
 
-# How fast do we attempt to converge?
-learning_rate = 0.12
+# how fast do we attempt to converge?
+learning_rate = 0.125
+
+# animation settings
+interval = 150
+frames = 2 * N
 
 # 2 distinct point clouds
 negative_samples = np.random.multivariate_normal(
@@ -62,7 +67,7 @@ def train_one_step(inputs, targets, weights, biases):
     return loss
 
 """Update the plot for each frame"""
-def update_plot(i, scat, line):
+def update_plot(i, scat, class_line, points_sp, loss_sp, loss_line):
     # Move one step closer
     loss = train_one_step(inputs, targets, W, b)
     predictions = model(inputs)
@@ -73,13 +78,19 @@ def update_plot(i, scat, line):
     binary_correct_predictions = tf.where(binary_predictions == targets, tf.ones_like(predictions), tf.zeros_like(predictions))
     colors = binary_correct_predictions
 
-    # Update the animation
-    plt.title(f"Classified data (learning_rate: {learning_rate}, step: {i+1})")
+    # Update the data for the line, and the colors of the points
+    points_sp.set_title(f"Classified data (learning_rate: {learning_rate}, step: {i+1})")
     scat.set_array(colors[:,0])
     x = np.linspace(-1, 4, 100)
     y = (- W[0] / W[1]) * x + ((0.5 - b) / W[1])
-    line[0].set_ydata(y)
+    class_line[0].set_ydata(y)
 
+    # Update the loss graph
+    loss_line[0].set_ydata(np.append(loss_line[0].get_ydata(), loss.numpy()))
+    loss_line[0].set_xdata(np.append(loss_line[0].get_xdata(), i))
+    #loss_sp.autoscale(enable=True, axis='y', tight=False)
+    loss_sp.relim()
+    loss_sp.autoscale_view()
 
 # Show some results
 predictions = model(inputs)
@@ -87,20 +98,42 @@ binary_predictions = tf.where(predictions > 0.5, tf.ones_like(predictions), tf.z
 binary_correct_predictions = tf.where(binary_predictions == targets, tf.ones_like(predictions), tf.zeros_like(predictions))
 colors = binary_correct_predictions
 
-fig = plt.figure()
+fig = plt.figure(figsize=(10,6))
+GridSpec = gridspec.GridSpec(ncols=2, nrows=1, figure=fig)
+subfig_points = fig.add_subfigure(GridSpec[0])
+subfig_loss = fig.add_subfigure(GridSpec[1])
+
+subplot_points = subfig_points.subplots(1, 1)
+subplot_points.set_title('Classification data')
+
+subplot_loss = subfig_loss.subplots(1, 1)
+subplot_loss.set_title('Loss vs. step')
+subplot_loss.set_xlim(0, frames)
+loss_line = subplot_loss.plot([], [], "-r")
+
+# Add the raw point data
 cmap = LinearSegmentedColormap.from_list('dont_care', [(1,0,0),(0,0.7,0)], N=2)
-scat = plt.scatter(inputs[:,0], inputs[:,1], c=colors, cmap=cmap)
-plt.title("Classified data")
+scat = subplot_points.scatter(inputs[:,0], inputs[:,1], c=colors, cmap=cmap)
+
+# Add the line representing the classification function
 x = np.linspace(-1, 4, 100)
 y = (- W[0] / W[1]) * x + ((0.5 - b) / W[1])
-line = plt.plot(x, y, "-b")
-plt.xlim(-2,6)
-plt.ylim(-2,6)
+classification_line = subplot_points.plot(x, y, "-b")
+subplot_points.set_xlim(-2,6)
+subplot_points.set_ylim(-2,6)
 
-ani = animation.FuncAnimation(fig, update_plot, frames=range(N*2), interval=100, fargs=(scat, line), repeat=False)
+ani = animation.FuncAnimation(
+    fig,
+    update_plot,
+    frames=range(frames),
+    interval=interval,
+    fargs=(scat, classification_line, subplot_points, subplot_loss, loss_line),
+    repeat=False
+)
 learning_rate_str = str(learning_rate).replace('.', 'p')
 
 # Uncomment to safe a gif of the animation
-#ani.save(f"lin_classifier_rate_{learning_rate_str}.gif")
+ani.save(f"lin_classifier_rate_{learning_rate_str}.gif")
 
-plt.show()
+# Uncomment to instead draw the graph
+#plt.show()
