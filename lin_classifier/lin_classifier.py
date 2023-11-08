@@ -10,7 +10,7 @@ N = 30
 num_samples_per_class = 300
 
 # how fast do we attempt to converge?
-learning_rate = 0.125
+learning_rate = 0.11
 
 # animation settings
 interval = 150
@@ -88,7 +88,7 @@ def update_plot(i, scat, class_line, points_sp, loss_sp, loss_line):
     # Update the loss graph
     loss_line[0].set_ydata(np.append(loss_line[0].get_ydata(), loss.numpy()))
     loss_line[0].set_xdata(np.append(loss_line[0].get_xdata(), i))
-    #loss_sp.autoscale(enable=True, axis='y', tight=False)
+
     loss_sp.relim()
     loss_sp.autoscale_view()
 
@@ -116,7 +116,7 @@ cmap = LinearSegmentedColormap.from_list('dont_care', [(1,0,0),(0,0.7,0)], N=2)
 scat = subplot_points.scatter(inputs[:,0], inputs[:,1], c=colors, cmap=cmap)
 
 # Add the line representing the classification function
-x = np.linspace(-1, 4, 100)
+x = np.linspace(-2, 6, 100)
 y = (- W[0] / W[1]) * x + ((0.5 - b) / W[1])
 classification_line = subplot_points.plot(x, y, "-b")
 subplot_points.set_xlim(-2,6)
@@ -133,7 +133,7 @@ ani = animation.FuncAnimation(
 learning_rate_str = str(learning_rate).replace('.', 'p')
 
 # Uncomment to safe a gif of the animation
-ani.save(f"lin_classifier_rate_{learning_rate_str}.gif")
+#ani.save(f"lin_classifier_rate_{learning_rate_str}.gif")
 
 # Uncomment to instead draw the graph
-#plt.show()
+plt.show()

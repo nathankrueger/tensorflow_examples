@@ -8,11 +8,14 @@ tf.config.set_visible_devices([], 'GPU')
 
 (train_images, train_labels), (test_images, test_labels) = mnist.load_data()
 
+# Create a sequential model with one hidden layer of 512 neurons
+# and one output layer of 10 digits for classifying digits 0 - 9
 model = keras.Sequential([
     layers.Dense(512, activation="relu"),
 	layers.Dense(10, activation="softmax")
 ])
 
+# Compile the model tracking accuracy
 model.compile(
 	optimizer="rmsprop",
 	loss="sparse_categorical_crossentropy",
@@ -28,7 +31,8 @@ test_images = test_images.reshape((10000, 28*28))
 train_images = train_images.astype("float32") / 255
 test_images = test_images.astype("float32") / 255
 
-# small batch size                                  --> very slow, averaging and applying weights for each sample, each epoch, good result
-# batch_size == sample_size (train_images.shape[0]) --> very fast, averaging and applying weights only once per epoch, poor result
-# moderate batch size, such as 128                  --> quick and approaches answer quickly, nice happy medium, good result
-model.fit(train_images, train_labels, epochs=5, batch_size=128)
+# Effect of batch size
+#   small batch size                                  --> very slow, averaging and applying weights for each sample, each epoch, good result
+#   batch_size == sample_size (train_images.shape[0]) --> very fast, averaging and applying weights only once per epoch, poor result
+#   moderate batch size, such as 128                  --> quick and approaches answer quickly, nice happy medium, good result
+history = model.fit(train_images, train_labels, epochs=5, batch_size=128)
