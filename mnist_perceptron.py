@@ -36,7 +36,7 @@ for layer_size in layer_sizes:
 
 	# Compile the model tracking accuracy
 	model.compile(
-		optimizer="rmsprop",
+		optimizer=keras.optimizers.RMSprop(1e-2),
 		loss="sparse_categorical_crossentropy",
 		metrics=["accuracy"]
 	)
@@ -45,7 +45,13 @@ for layer_size in layer_sizes:
 	#   small batch size                                  --> very slow, averaging and applying weights for each sample, each epoch, good result
 	#   batch_size == sample_size (train_images.shape[0]) --> very fast, averaging and applying weights only once per epoch, poor result
 	#   moderate batch size, such as 128                  --> quick and approaches answer quickly, nice happy medium, good result
-	history = model.fit(train_images, train_labels, epochs=num_epochs, batch_size=batch_size)
+	history = model.fit(
+		train_images,
+		train_labels,
+		epochs=num_epochs,
+		batch_size=batch_size,
+		validation_split=0.2
+	)
 	layer_size_vs_accuracy[layer_size] = history.history
 
 # Summarize the results of the experiment

@@ -23,7 +23,7 @@ def vectorize_sequences(sequences, dimension):
     results = np.zeros((len(sequences), dimension))
     for i, seq in enumerate(sequences):
         for j in seq:
-            results[i, j] = 1
+            results[i, j] += 1
     return results
 
 # Convert the training and destination data into 10000 dimensional
