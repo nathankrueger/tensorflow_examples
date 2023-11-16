@@ -14,6 +14,7 @@ font_size = 4
 font_color_bgr = (0, 0 , 255) 
 
 esc_key = 27
+del_key = 40
 left_key = 2
 right_key = 3
 
@@ -62,16 +63,23 @@ def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict
                 break
 
             # Navigate forward
-            if keyPressed == right_key:
+            elif keyPressed == right_key:
                 if img_idx < total_images - 2:
                     img_idx += 1
                     img_navigate = True
                     break
-            
+
             # Navigate backward
-            if keyPressed == left_key:
+            elif keyPressed == left_key:
                 if img_idx > 0:
                     img_idx -= 1
+                    img_navigate = True
+                    break
+
+            # Remove a label
+            elif keyPressed == del_key:
+                if img in label_dict:
+                    del label_dict[img]
                     img_navigate = True
                     break
 
