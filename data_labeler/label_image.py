@@ -57,7 +57,7 @@ def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict
         while needs_valid_key:
             keyPressed = cv2.waitKeyEx(0) & 0xFF
 
-            # Support quiting early
+            # Support quitting early
             if keyPressed == esc_key:
                 esc_requested = True
                 break

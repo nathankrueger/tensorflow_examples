@@ -2,9 +2,12 @@ import tensorflow as tf
 import numpy as np
 import csv
 import os
+import shutil
 import cv2
 import keras
+import glob
 from PIL import Image
+from pathlib import Path
 
 weights_filename = "ring_convnet_weights/checkpt.ckpt"
 np_train_images_file = 'train_images.npy'
@@ -27,12 +30,48 @@ max_images = 1000
 
 labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer']
 
-csv_path = '/Users/nathankrueger/Documents/Programming/ML/tensorflow_examples/ring_downloader/ring_data/sept_through_nov_2023/frames/test.csv'
+img_extensions = ['.jpg']
+csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/test.csv'
 
 def unison_shuffled_copies(a, b):
     assert len(a) == len(b)
     p = np.random.permutation(len(a))
     return a[p], b[p]
+
+def get_img_dict_from_csv(csv_path):
+    img_dict = {}
+    with open(csv_path, 'r', newline='') as csvfile:
+        reader = csv.reader(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for row in reader:
+            img_path = row[0]
+            label = row[1]
+            img_dict[img_path] = label
+    return img_dict
+
+def save_img_dict_to_csv(img_dict, csv_path):
+    # copy just in case we've messed something up...
+    shutil.copy(csv_path, str(csv_path) + '.bak')
+
+    # overwrites any pre-existing file
+    with open(os.path.abspath(csv_path), 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for img in img_dict:
+            writer.writerow([img, img_dict[img]])
+
+def get_all_images_in_folder(folder, recursive=False):
+    all_images = []
+    for img_type in img_extensions:
+        all_images.extend(glob.glob(str(Path(os.path.abspath(folder)) / f'*{img_type}'), recursive=recursive))
+    all_images.sort()
+    return all_images
+
+def get_unlabeled_imgs(img_dict, folder):
+    result = []
+    all_imgs = get_all_images_in_folder(folder)
+    for path in all_imgs:
+        if not path in img_dict:
+            result.append(path)
+    return path
 
 def get_num_unique_labels(all_labels):
     lbl_dict = {}
@@ -40,6 +79,11 @@ def get_num_unique_labels(all_labels):
         lbl_dict[lbl] = lbl
     label_num = len(lbl_dict)
     return label_num
+
+def convert_img_to_tensor(img_path):
+    img = Image.open(img_path)
+    img_tensor = tf.convert_to_tensor(img)
+    return img_tensor
 
 def split_data_into_groups_seq(all_images, all_labels):
     train_percentage = 0.6
@@ -98,7 +142,7 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
     test_imgs = None
     test_labels = None
 
-    # Concatenate the percentage of each class into each set (train, val, test)
+    # concatenate the percentage of each class into each set (train, val, test)
     for label in label_buckets:
         instances = label_buckets[label]
         num_instances = len(instances)
@@ -106,10 +150,10 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
         val_end_idx = int(train_end_idx + (val_percentage * num_instances))
 
         curr_train_images = np.array(instances[:train_end_idx])
+        #fill with the current label
         curr_train_labels =  np.full((train_end_idx,), label, dtype=int)
         if train_imgs is None:
             train_imgs = curr_train_images
-            # Fill with the current label
             train_labels = curr_train_labels
         else:
             train_imgs = np.concatenate((train_imgs, curr_train_images))
@@ -119,7 +163,6 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
         curr_val_labels =  np.full((val_end_idx - train_end_idx,), label, dtype=int)
         if val_imgs is None:
             val_imgs = curr_val_images
-            # Fill with the current label
             val_labels = curr_val_labels
         else:
             val_imgs = np.concatenate((val_imgs, curr_val_images))
@@ -129,11 +172,11 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
         curr_test_labels =  np.full((num_instances - val_end_idx,), label, dtype=int)
         if test_imgs is None:
             test_imgs = curr_test_images
-            # Fill with the current label
             test_labels = curr_test_labels
         else:
             test_imgs = np.concatenate((test_imgs, curr_test_images))
             test_labels = np.concatenate((test_labels, curr_test_labels))
+
 
     print(f"train_imgs: {train_imgs.shape}")
     print(f"train_labels: {train_labels.shape}")
@@ -142,11 +185,11 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
     print(f"test_imgs: {test_imgs.shape}")
     print(f"test_labels: {test_labels.shape}")
 
-    (train_imgs, train_labels) = unison_shuffled_copies(train_imgs, train_labels)
-    (val_imgs, val_labels) = unison_shuffled_copies(val_imgs, val_labels)
-    (test_imgs, test_labels) = unison_shuffled_copies(test_imgs, test_labels)
+    train_imgs, train_labels = unison_shuffled_copies(train_imgs, train_labels)
+    val_imgs, val_labels = unison_shuffled_copies(val_imgs, val_labels)
+    test_imgs, test_labels = unison_shuffled_copies(test_imgs, test_labels)
 
-    return (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels)
+    return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
 def get_compiled_model(img_shape, num_outputs):
     inputs = keras.Input(shape=img_shape)
@@ -170,14 +213,15 @@ def get_compiled_model(img_shape, num_outputs):
 
     return model
 
-def load_data(force_reload_images=False, max_images=None):
+def load_data(csv_path, force_reload_images=False, max_images=None):
+    # only allow load from file if we have all the necessary content
     all_files_on_disk = True
     for file in all_numpy_files:
         if not os.path.exists(file):
             all_files_on_disk = False
             break
 
-    # If all the files are present, or if we are forcing the image load (forcing introduces a new shuffle of the data)
+    # if all the files are present, or if we are forcing the image load (forcing introduces a new shuffle of the data)
     if all_files_on_disk and not force_reload_images:
         train_imgs = np.load(np_train_images_file)
         train_labels = np.load(np_train_labels_file)
@@ -190,38 +234,35 @@ def load_data(force_reload_images=False, max_images=None):
         all_images = []
         all_labels = []
 
-        img_dict = {}
-        unique_labels = {v: k for k, v in enumerate(labels_to_consider)}
-        with open(csv_path, 'r', newline='') as csvfile:
-            reader = csv.reader(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            for row in reader:
-                img_path = row[0]
-                label = row[1]
+        # load in csv file (file_path --> label)
+        img_dict = get_img_dict_from_csv(csv_path)
 
-                # Convert labels to integer values
-                if label in unique_labels:
-                    label_int = unique_labels[label]
-                    img_dict[img_path] = label_int
+        # map labels to consider to integer values used by net
+        unique_labels = {str_label: int_label for int_label, str_label in enumerate(labels_to_consider)}
 
-        # Convert images to tensors
+        # convert labels to integer values
+        img_dict = {img_path: unique_labels[str_label] for img_path, str_label in img_dict.items() if str_label in labels_to_consider}
+
+        # convert images to tensors
+        # TODO: bucketize & split into train, val, test sets *prior* to reading into tensor.
+        #       this will skip unecessary and time consuming work.
         img_idx = 0
-        total_images_in_dict = len(img_dict)
-        for key, val in img_dict.items():
-            print(f'Converting img to tensor format and normalizing: [{img_idx + 1} / {total_images_in_dict}] ...')
-            img_idx += 1
-            img = Image.open(key)
-            img_tensor = tf.convert_to_tensor(img)
+        total_images = len(img_dict)
+        for img_path, label in img_dict.items():
+            print(f'Converting img to tensor format and normalizing: [{img_idx + 1} / {total_images}] ...')
+            img_tensor = convert_img_to_tensor(img_path)
             all_images.append(img_tensor)
-            all_labels.append(val)
+            all_labels.append(label)
+            img_idx += 1
 
-        # Convert image sequence to np array, normalize image channels from 0.0 to 1.0
+        # convert image sequence to np array, normalize image channels from 0.0 to 1.0
         all_images = np.array(all_images)
         all_images = all_images.astype("float32") / 255
         all_labels = np.array(all_labels)
 
-        (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels) = split_data_into_groups_bucketize(all_images, all_labels, max_images)
+        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(all_images, all_labels, max_images)
 
-        # Save the results for next time!
+        # save the results for next time!
         np.save(np_train_images_file, train_imgs)
         np.save(np_train_labels_file, train_labels)
         np.save(np_val_images_file, val_imgs)
@@ -229,13 +270,13 @@ def load_data(force_reload_images=False, max_images=None):
         np.save(np_test_images_file, test_imgs)
         np.save(np_test_labels_file, test_labels)
 
-        return (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels)
+        return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
-def main():
+def train_and_evaluate(force_reload_images):
     if use_cpu:
         tf.config.set_visible_devices([], 'GPU')
 
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(force_reload_images=True, max_images=max_images)
+    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=force_reload_images, max_images=max_images)
 
     # how many unique labels are there?
     num_labels = get_num_unique_labels(train_labels)
@@ -243,9 +284,11 @@ def main():
     # what's the image shape for all images in this dataset
     img_shape = train_imgs[0].shape
 
+    # get the model and show a brief summary of it
     model = get_compiled_model(img_shape=img_shape, num_outputs=num_labels)
     print(model.summary())
 
+    # train the model, allowing user CTRL-C to quit the process early
     try:
         model.fit(
             train_imgs,
@@ -256,7 +299,7 @@ def main():
                 keras.callbacks.EarlyStopping(patience=15),
                 keras.callbacks.ModelCheckpoint(
                     filepath=weights_filename,
-                    save_weights_only=True,
+                    save_weights_only=False,
                     save_best_only=True,
                     monitor='val_accuracy',
                     mode='max'
@@ -277,17 +320,18 @@ def main():
         print(os.linesep + "Killed fit early via CTRL-C...")
         pass
 
+    # load in the weights from the epoch with the maximum accuracy
+    # and evaluate the model on the test data
     model.load_weights(weights_filename)
-    (loss, accuracy) = model.evaluate(
+    loss, accuracy = model.evaluate(
         test_imgs,
         test_labels,
         batch_size=64
     )
-
     print(f"Loss: {loss}, Accuracy: {accuracy}")
 
 def evaluate_only(show_predict_loop=False):
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(force_reload_images=False, max_images=max_images)
+    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=False, max_images=max_images)
 
     # how many unique labels are there?
     num_labels = get_num_unique_labels(train_labels)
@@ -298,29 +342,32 @@ def evaluate_only(show_predict_loop=False):
     model = get_compiled_model(img_shape=img_shape, num_outputs=num_labels)
     print(model.summary())
 
+    # evaluate the model from the best epoch checkpoint
     model.load_weights(weights_filename)
-
     model.evaluate(
         test_imgs,
         test_labels,
         batch_size=64
     )
 
+    # show the labeled sample for fun & confirming the labels are correct
     if show_predict_loop:
         esc_key = 27
         image_review_ms = 1500
         label_dict = {k: v for k, v in enumerate(labels_to_consider)}
         predictions = model.predict(test_imgs)
 
+        # loop over each prediction made on the test data
         for idx, img in enumerate(test_imgs):
             prediction = predictions[idx]
             int_label = tf.argmax(prediction).numpy()
             label = label_dict[int_label]
 
-            # allow reviewing of just the most troublesome, least common
-            if (label == 'car' or label == 'none'):
+            # review just the most troublesome, least common classes
+            if label in ['car', 'none']:
                 continue
 
+            # show the image for a moment before moving on to the next
             cv2.imshow(label, img)
             keyPressed = cv2.waitKeyEx(image_review_ms) & 0xFF
             if keyPressed == esc_key:
@@ -329,5 +376,5 @@ def evaluate_only(show_predict_loop=False):
             cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    #main()
-    evaluate_only(True)
+    train_and_evaluate(force_reload_images=True)
+    #evaluate_only(show_predict_loop=True)
