@@ -25,7 +25,7 @@ all_numpy_files = [
 use_cpu = False
 max_images = 1000
 
-labels_to_consider = ['none', 'car', 'deer', 'turkey']
+labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer']
 
 csv_path = '/Users/nathankrueger/Documents/Programming/ML/tensorflow_examples/ring_downloader/ring_data/sept_through_nov_2023/frames/test.csv'
 
@@ -151,9 +151,9 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
 def get_compiled_model(img_shape, num_outputs):
     inputs = keras.Input(shape=img_shape)
 
-    x = keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(inputs)
+    x = keras.layers.Conv2D(filters=32, kernel_size=3, activation='relu')(inputs)
     x = keras.layers.MaxPool2D(pool_size=2)(x)
-    x = keras.layers.Conv2D(filters=64, kernel_size=5, activation='relu')(x)
+    x = keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
     x = keras.layers.MaxPool2D(pool_size=2)(x)
     x = keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
     x = keras.layers.Dropout(0.5)(x)
@@ -191,34 +191,23 @@ def load_data(force_reload_images=False, max_images=None):
         all_labels = []
 
         img_dict = {}
-        unique_labels = {}
-        label_num = 0
+        unique_labels = {v: k for k, v in enumerate(labels_to_consider)}
         with open(csv_path, 'r', newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
             for row in reader:
                 img_path = row[0]
                 label = row[1]
-                label_int = None
 
                 # Convert labels to integer values
                 if label in unique_labels:
                     label_int = unique_labels[label]
-                else:
-                    # Only look at certain classes if desired
-                    if labels_to_consider is not None and label in labels_to_consider:
-                        unique_labels[label] = label_num
-                        print(f"{label_num} == {label}")
-                        label_int = label_num
-                        label_num += 1                
-                
-                # if we have an image we wish to consider in our dataset, record it
-                if label_int is not None:
                     img_dict[img_path] = label_int
 
         # Convert images to tensors
         img_idx = 0
+        total_images_in_dict = len(img_dict)
         for key, val in img_dict.items():
-            print(f'Converting img to tensor format and normalizing: {img_idx}...')
+            print(f'Converting img to tensor format and normalizing: [{img_idx + 1} / {total_images_in_dict}] ...')
             img_idx += 1
             img = Image.open(key)
             img_tensor = tf.convert_to_tensor(img)
@@ -264,7 +253,7 @@ def main():
             validation_data=(val_imgs, val_labels),
             epochs=100,
             callbacks=[
-                keras.callbacks.EarlyStopping(patience=5),
+                keras.callbacks.EarlyStopping(patience=15),
                 keras.callbacks.ModelCheckpoint(
                     filepath=weights_filename,
                     save_weights_only=True,
@@ -273,10 +262,10 @@ def main():
                     mode='max'
                 ),
                 keras.callbacks.ReduceLROnPlateau(
-                    monitor='val_loss',
-                    factor=0.1,
-                    patience=3,
-                    min_lr=0.00001
+                    monitor='val_accuracy',
+                    factor=0.5,
+                    patience=6,
+                    min_lr=0.00005
                 ),
                 keras.callbacks.TensorBoard(
                     log_dir=os.path.abspath("./tensorboard_logs")
@@ -319,15 +308,19 @@ def evaluate_only(show_predict_loop=False):
 
     if show_predict_loop:
         esc_key = 27
-        image_review_ms = 2000
-        label_dict = {0:"car", 1:"none", 2:"deer", 3:"turkey"}
+        image_review_ms = 1500
+        label_dict = {k: v for k, v in enumerate(labels_to_consider)}
         predictions = model.predict(test_imgs)
+
         for idx, img in enumerate(test_imgs):
             prediction = predictions[idx]
             int_label = tf.argmax(prediction).numpy()
-            if int_label < 2:
-                continue
             label = label_dict[int_label]
+
+            # allow reviewing of just the most troublesome, least common
+            if (label == 'car' or label == 'none'):
+                continue
+
             cv2.imshow(label, img)
             keyPressed = cv2.waitKeyEx(image_review_ms) & 0xFF
             if keyPressed == esc_key:
