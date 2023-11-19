@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import random
 import csv
 import os
 import shutil
@@ -33,10 +34,16 @@ labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer']
 img_extensions = ['.jpg']
 csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/test.csv'
 
-def unison_shuffled_copies(a, b):
+def get_unison_shuffled_np_array_copies(a, b):
     assert len(a) == len(b)
     p = np.random.permutation(len(a))
     return a[p], b[p]
+
+def get_unison_shuffled_list_copies(a, b):
+    zipped = list(zip(a, b))
+    random.shuffle(zipped)
+    a, b = zip(*zipped)
+    return a, b
 
 def get_img_dict_from_csv(csv_path):
     img_dict = {}
@@ -83,6 +90,7 @@ def get_num_unique_labels(all_labels):
 def convert_img_to_tensor(img_path):
     img = Image.open(img_path)
     img_tensor = tf.convert_to_tensor(img)
+    img_tensor = img_tensor.numpy().astype("float32") / 255
     return img_tensor
 
 def split_data_into_groups_seq(all_images, all_labels):
@@ -114,18 +122,24 @@ def split_data_into_groups_seq(all_images, all_labels):
 
     return (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels)
 
-def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
+def split_data_into_groups_bucketize(img_dict, max_images=None):
+    # test_percentage = 1 - (train_percentage + val_percentage)
     train_percentage = 0.6
     val_percentage = 0.2
 
-    # randomize, then reduce the sample size
+    all_images = []
+    all_labels = []
+    for k, v in img_dict.items():
+        all_images.append(k)
+        all_labels.append(v)
+
+    # randomize the order
+    all_images, all_labels = get_unison_shuffled_list_copies(all_images, all_labels)
+
+    # reduce the sample size if requested
     if max_images is not None and max_images < len(all_images):
-        all_images, all_labels = unison_shuffled_copies(all_images, all_labels)
         all_images = all_images[:max_images]
         all_labels = all_labels[:max_images]
-
-    print(f"all_images: {all_images.shape}")
-    print(f"all_labels: {all_labels.shape}")
 
     # bucketize by group
     label_buckets = {}
@@ -149,45 +163,40 @@ def split_data_into_groups_bucketize(all_images, all_labels, max_images=None):
         train_end_idx = int(train_percentage * num_instances)
         val_end_idx = int(train_end_idx + (val_percentage * num_instances))
 
-        curr_train_images = np.array(instances[:train_end_idx])
-        #fill with the current label
-        curr_train_labels =  np.full((train_end_idx,), label, dtype=int)
+        # train
+        curr_train_images = instances[:train_end_idx]
+        curr_train_labels = [label] * train_end_idx
         if train_imgs is None:
             train_imgs = curr_train_images
             train_labels = curr_train_labels
         else:
-            train_imgs = np.concatenate((train_imgs, curr_train_images))
-            train_labels = np.concatenate((train_labels, curr_train_labels))
+            train_imgs = train_imgs + curr_train_images
+            train_labels = train_labels + curr_train_labels
 
-        curr_val_images = np.array(instances[train_end_idx:val_end_idx])
-        curr_val_labels =  np.full((val_end_idx - train_end_idx,), label, dtype=int)
+        # val
+        curr_val_images = instances[train_end_idx:val_end_idx]
+        curr_val_labels =  [label] * (val_end_idx - train_end_idx)
         if val_imgs is None:
             val_imgs = curr_val_images
             val_labels = curr_val_labels
         else:
-            val_imgs = np.concatenate((val_imgs, curr_val_images))
-            val_labels = np.concatenate((val_labels, curr_val_labels))
+            val_imgs = val_imgs + curr_val_images
+            val_labels = val_labels + curr_val_labels
 
-        curr_test_images = np.array(instances[val_end_idx:])
-        curr_test_labels =  np.full((num_instances - val_end_idx,), label, dtype=int)
+        # test
+        curr_test_images = instances[val_end_idx:]
+        curr_test_labels =  [label] * (num_instances - val_end_idx)
         if test_imgs is None:
             test_imgs = curr_test_images
             test_labels = curr_test_labels
         else:
-            test_imgs = np.concatenate((test_imgs, curr_test_images))
-            test_labels = np.concatenate((test_labels, curr_test_labels))
+            test_imgs = test_imgs + curr_test_images
+            test_labels = test_labels + curr_test_labels
 
-
-    print(f"train_imgs: {train_imgs.shape}")
-    print(f"train_labels: {train_labels.shape}")
-    print(f"val_imgs: {val_imgs.shape}")
-    print(f"val_labels: {val_labels.shape}")
-    print(f"test_imgs: {test_imgs.shape}")
-    print(f"test_labels: {test_labels.shape}")
-
-    train_imgs, train_labels = unison_shuffled_copies(train_imgs, train_labels)
-    val_imgs, val_labels = unison_shuffled_copies(val_imgs, val_labels)
-    test_imgs, test_labels = unison_shuffled_copies(test_imgs, test_labels)
+    # shuffle the train, val, and test content
+    train_imgs, train_labels = get_unison_shuffled_list_copies(train_imgs, train_labels)
+    val_imgs, val_labels = get_unison_shuffled_list_copies(val_imgs, val_labels)
+    test_imgs, test_labels = get_unison_shuffled_list_copies(test_imgs, test_labels)
 
     return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
@@ -231,9 +240,6 @@ def load_data(csv_path, force_reload_images=False, max_images=None):
         test_labels = np.load(np_test_labels_file)
         return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
     else:
-        all_images = []
-        all_labels = []
-
         # load in csv file (file_path --> label)
         img_dict = get_img_dict_from_csv(csv_path)
 
@@ -243,24 +249,23 @@ def load_data(csv_path, force_reload_images=False, max_images=None):
         # convert labels to integer values
         img_dict = {img_path: unique_labels[str_label] for img_path, str_label in img_dict.items() if str_label in labels_to_consider}
 
-        # convert images to tensors
-        # TODO: bucketize & split into train, val, test sets *prior* to reading into tensor.
-        #       this will skip unecessary and time consuming work.
-        img_idx = 0
-        total_images = len(img_dict)
-        for img_path, label in img_dict.items():
-            print(f'Converting img to tensor format and normalizing: [{img_idx + 1} / {total_images}] ...')
-            img_tensor = convert_img_to_tensor(img_path)
-            all_images.append(img_tensor)
-            all_labels.append(label)
-            img_idx += 1
+        # get lists of equal order of (train, val, test) images and labels that are split by a requested percentage on a class by class
+        # basis.  this way, if you ask for 60% training data, you'll get 60% of each class (which aren't going to be equally represented)
+        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images)
 
-        # convert image sequence to np array, normalize image channels from 0.0 to 1.0
-        all_images = np.array(all_images)
-        all_images = all_images.astype("float32") / 255
-        all_labels = np.array(all_labels)
+        # convert list of images to list of tensors
+        print(f"Coverting {len(train_imgs) + len(val_imgs) + len(test_imgs)} images to tensor...")
+        train_imgs = list(map(convert_img_to_tensor, train_imgs))
+        val_imgs = list(map(convert_img_to_tensor, val_imgs))
+        test_imgs = list(map(convert_img_to_tensor, test_imgs))
 
-        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(all_images, all_labels, max_images)
+        # convert lists to np array
+        train_imgs = np.array(train_imgs)
+        train_labels = np.array(train_labels)
+        val_imgs = np.array(val_imgs)
+        val_labels = np.array(val_labels)
+        test_imgs = np.array(test_imgs)
+        test_labels = np.array(test_labels)
 
         # save the results for next time!
         np.save(np_train_images_file, train_imgs)
