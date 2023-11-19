@@ -4,3 +4,10 @@ data_type_experiments.py
 pyplot_animation.py
 web_test.py
 ring_downloader/ring_data/*
+ring_downloader/ring_api.ini
+ring_downloader/test_token.cache
+ring_convnet_weights/*
+tensorboard_logs/*
+*.gif
+*.npy
+*workspace
