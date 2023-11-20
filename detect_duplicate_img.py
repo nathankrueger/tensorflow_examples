@@ -25,9 +25,8 @@ print_q = queue.Queue()
 
 def get_progress_msg(num_completed):
     global completed
-    progress_lock.acquire()
-    completed += num_completed
-    progress_lock.release()
+    with progress_lock:
+        completed += num_completed
     percentage = (float(completed) / float(total_comparisons)) * 100.0
     return f'Comparing [{completed} {percentage:0,.2f}% of {total_comparisons}] cosine similarities...'
 
@@ -95,12 +94,91 @@ def calculate_batch_of_cosine_similarities(batch, img_path_to_feature_vec, sim_t
         print_q.put(get_progress_msg(batch_sz % print_interval))
 
         # don't trust the GIL here...
-        lock.acquire()
-        sim_tup_list.extend(batch_tup_list)
-        lock.release()
+        with lock:
+            sim_tup_list.extend(batch_tup_list)
 
     except Exception as ex:
         print(ex)
+
+def remove_duplicates(input_csv, output_csv_path, thresholds):
+    sim_tup_list = []
+
+    start = timer()
+    if os.path.exists(input_csv):
+        with open(input_csv, 'r', newline='') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            for row in reader:
+                sim_tup_list.append((row[0], row[1], row[2]))
+
+    print(f"Read in {len(sim_tup_list)} image pairs in {str(timedelta(seconds=timer() - start))}")
+
+    for threshold in thresholds:
+        output_unique_csv = Path(output_csv_path) / f"unique_{str(threshold).replace('.', 'p')}.csv"
+        output_similarity_csv = Path(output_csv_path) / f"similarities_{str(threshold).replace('.', 'p')}.csv"
+        write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_similarity_csv, threshold)
+
+def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_similarity_csv, threshold):
+    to_remove_set = {}
+    to_keep_set = {}
+    all_images = {}
+    for tup in sim_tup_list:
+        imageA = tup[0]
+        imageB = tup[1]
+        similarity = float(tup[2])
+
+        all_images[imageA] = None
+        all_images[imageB] = None
+
+        # only consider images that are sufficiently similar
+        if similarity > threshold:
+            # what is imageA in this comparison can be imageB identified for removal
+            # in a previous comparison
+            if not imageA in to_remove_set:
+                # choose the second imageB as the one to remove, by default
+                to_remove_set[imageB] = None
+                to_keep_set[imageA] = None
+            else:
+                if not imageB in to_keep_set:
+                    # if imageA has been chosen for removal, and imageB wasn't chosen
+                    # as one the should be kept, remove it too.  This comes into play
+                    # when you have more than 2 similar images (by transitive property)
+                    to_remove_set[imageB] = None
+
+    print(f'{len(to_remove_set)} similar images identified for removal...')
+
+    # keep all images that are not in the to remove list
+    print(f"Writing images that are unique with threshold of {threshold} to file {output_unique_csv}")
+    sorted_images = sorted(all_images.keys())
+    with open(output_unique_csv, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for img in sorted_images:
+            if img in to_remove_set:
+                continue
+            else:
+                writer.writerow([img])
+
+    # write only the images that should be removed
+    print(f"Writing images that are similar with threshold of {threshold} to file {output_similarity_csv}")
+    sorted_images = sorted(to_remove_set.keys())
+    with open(output_similarity_csv, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for img in sorted_images:
+            if img in to_remove_set:
+                writer.writerow([img])
+
+def review_duplicates(csv_path):
+    if os.path.exists(csv_path):
+        with open(csv_path, 'r', newline='') as csvfile:
+            reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            for row in reader:
+                img_path = os.path.abspath(str(Path('./ring_downloader/ring_data/sept_through_nov_2023/frames/') / row[0]))
+                print(img_path)
+                cv2.imshow(row[0], cv2.imread(img_path))
+                keypress = cv2.waitKeyEx(delay=0) & 0xFF
+                if keypress == 27:
+                    cv2.destroyAllWindows()
+                    break
+                cv2.destroyAllWindows()
 
 def main():
     parser = argparse.ArgumentParser(description='Determine the pairwise cosine similarity of a batch of images')
@@ -182,11 +260,13 @@ def main():
 
     # write the results
     csv_path  = Path(args.input_dir) / args.output_csv
-    print(f"Writing {total_combos} to {str(csv_path)}...")
+    print(f"Writing {total_combos} to {csv_path}...")
     with open(csv_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for tup in sim_tup_list:
             writer.writerow(list(tup))
 
 if __name__ == '__main__':
-    main()
+    #remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', './', [0.99, 0.995, 0.999, 0.9995, 0.9999])
+    review_duplicates('./unqiue_0p9995.csv')
+    #main()
