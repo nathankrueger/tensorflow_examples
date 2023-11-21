@@ -15,7 +15,6 @@ from PIL import Image
 
 img_extensions = ['.jpg']
 imagenet_sz = (224, 224, 3)
-size_limit = 500
 
 progress_lock = threading.Lock()
 total_comparisons = 0
@@ -100,7 +99,7 @@ def calculate_batch_of_cosine_similarities(batch, img_path_to_feature_vec, sim_t
     except Exception as ex:
         print(ex)
 
-def remove_duplicates(input_csv, output_csv_path, thresholds):
+def catalog_duplicates(input_csv, output_csv_path, thresholds):
     sim_tup_list = []
 
     start = timer()
@@ -209,7 +208,8 @@ def review_duplicates(csv_path, img_folder):
 def main():
     parser = argparse.ArgumentParser(description='Determine the pairwise cosine similarity of a batch of images')
     parser.add_argument('--input_dir', type=str, required=True)
-    parser.add_argument('--output_csv', type=str, required=True)
+    parser.add_argument('--output_csv', type=str, required=True, help='Path relative to input dir where the similarity csv file will be written')
+    parser.add_argument('--size_limit', type=int, default=-1)
     args=parser.parse_args()
 
     # find all images
@@ -235,9 +235,9 @@ def main():
     )
 
     # reduce the size for testing or truncated results
-    if size_limit is not None:
+    if args.size_limit > 0:
         random.shuffle(all_images)
-        all_images = all_images[:size_limit]
+        all_images = all_images[:args.size_limit]
 
     # get mapping of each image to each feature vector
     total_images = len(all_images)
@@ -259,7 +259,7 @@ def main():
     total_combos = combos.shape[0]
     global total_comparisons
     total_comparisons = total_combos
-    print(f"Got {total_combos} in {str(timedelta(seconds=end - start))}")
+    print(f"Got {total_combos} in {str(timedelta(seconds=timer() - start))}")
 
     # Create a print thread
     t = threading.Thread(target=print_thread, daemon=True)
@@ -293,7 +293,7 @@ def main():
             writer.writerow(list(tup))
 
 if __name__ == '__main__':
-    duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
-    #remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
-    #main()
+    #duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
+    #catalog_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
+    #review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
+    main()
