@@ -15,7 +15,6 @@ from PIL import Image
 
 img_extensions = ['.jpg']
 imagenet_sz = (224, 224, 3)
-print_interval = 1000000
 size_limit = 500
 
 progress_lock = threading.Lock()
@@ -73,6 +72,7 @@ def gen_batch(iterable, batch_sz):
         yield iterable[ndx:min(ndx+batch_sz, l)]
 
 def calculate_batch_of_cosine_similarities(batch, img_path_to_feature_vec, sim_tup_list, lock):
+    print_interval = 10000
     try:
         batch_tup_list = []
         batch_sz = len(batch)
@@ -114,14 +114,19 @@ def remove_duplicates(input_csv, output_csv_path, thresholds):
 
     for threshold in thresholds:
         output_unique_csv = Path(output_csv_path) / f"unique_{str(threshold).replace('.', 'p')}.csv"
-        output_similarity_csv = Path(output_csv_path) / f"similarities_{str(threshold).replace('.', 'p')}.csv"
-        write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_similarity_csv, threshold)
+        output_clone_csv = Path(output_csv_path) / f"clones_{str(threshold).replace('.', 'p')}.csv"
+        write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_clone_csv, threshold)
 
-def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_similarity_csv, threshold):
-    to_remove_set = {}
-    to_keep_set = {}
+def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_clone_csv, threshold):
     all_images = {}
-    for tup in sim_tup_list:
+    sim_dict = {}
+    clones = {}
+
+    print_interval = 100000
+    total_pairs = len(sim_tup_list)
+    print(f"Determining duplicates among {total_pairs} pairs...")
+
+    for idx, tup in enumerate(sim_tup_list):
         imageA = tup[0]
         imageB = tup[1]
         similarity = float(tup[2])
@@ -129,22 +134,42 @@ def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_sim
         all_images[imageA] = None
         all_images[imageB] = None
 
-        # only consider images that are sufficiently similar
-        if similarity > threshold:
-            # what is imageA in this comparison can be imageB identified for removal
-            # in a previous comparison
-            if not imageA in to_remove_set:
-                # choose the second imageB as the one to remove, by default
-                to_remove_set[imageB] = None
-                to_keep_set[imageA] = None
-            else:
-                if not imageB in to_keep_set:
-                    # if imageA has been chosen for removal, and imageB wasn't chosen
-                    # as one the should be kept, remove it too.  This comes into play
-                    # when you have more than 2 similar images (by transitive property)
-                    to_remove_set[imageB] = None
+        if idx % print_interval == 0:
+            percent_complete = (float(idx) / float(total_pairs)) * 100.0
+            print(f"[{percent_complete:0.2f}% of {total_pairs}] pairs processed...")
 
-    print(f'{len(to_remove_set)} similar images identified for removal...')
+        # only consider images that are sufficiently similar
+        if similarity >= threshold:
+            imageA_is_clone = imageA in clones
+            imageB_is_clone = imageB in clones
+
+            # only one is a clone
+            if imageA_is_clone != imageB_is_clone:
+                old_clone = imageA if imageA_is_clone else imageB
+                new_clone = imageA if imageB_is_clone else imageB
+
+                # be careful not to record an image as a clone of itself
+                if new_clone not in sim_dict:
+                    relative = clones[old_clone]
+                    sim_dict[relative][new_clone] = None
+                    clones[new_clone] = relative
+
+            # neither are clones (yet)
+            elif not imageA_is_clone and not imageB_is_clone:
+                # imageB is the clone by convention
+
+                # be careful not to record an image as a clone of itself
+                if imageB not in sim_dict:
+                    clones[imageB] = imageA
+                    if imageA not in sim_dict:
+                        sim_dict[imageA] = {imageB:None}
+                    else:
+                        sim_dict[imageA][imageB] = None
+                else:
+                    sim_dict[imageB][imageA] = None
+                    clones[imageA] = imageB
+
+    print(f'{len(clones)} similar images identified for removal...')
 
     # keep all images that are not in the to remove list
     print(f"Writing images that are unique with threshold of {threshold} to file {output_unique_csv}")
@@ -152,19 +177,19 @@ def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_sim
     with open(output_unique_csv, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for img in sorted_images:
-            if img in to_remove_set:
+            if img in clones:
                 continue
             else:
                 writer.writerow([img])
 
     # write only the images that should be removed
-    print(f"Writing images that are similar with threshold of {threshold} to file {output_similarity_csv}")
-    sorted_images = sorted(to_remove_set.keys())
-    with open(output_similarity_csv, 'w', newline='') as csvfile:
+    print(f"Writing images that are similar with threshold of {threshold} to file {output_clone_csv}")
+    sorted_images = sorted(sim_dict.keys())
+    with open(output_clone_csv, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-        for img in sorted_images:
-            if img in to_remove_set:
-                writer.writerow([img])
+        for original_dup in sorted_images:
+            for clone in sim_dict[original_dup]:
+                writer.writerow([clone])
 
 def review_duplicates(csv_path):
     if os.path.exists(csv_path):
@@ -172,9 +197,10 @@ def review_duplicates(csv_path):
             reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
             for row in reader:
                 img_path = os.path.abspath(str(Path('./ring_downloader/ring_data/sept_through_nov_2023/frames/') / row[0]))
-                print(img_path)
                 cv2.imshow(row[0], cv2.imread(img_path))
                 keypress = cv2.waitKeyEx(delay=0) & 0xFF
+
+                # quit early!
                 if keypress == 27:
                     cv2.destroyAllWindows()
                     break
@@ -268,5 +294,5 @@ def main():
 
 if __name__ == '__main__':
     #remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', './', [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    review_duplicates('./unqiue_0p9995.csv')
+    review_duplicates('./unique_0p995.csv')
     #main()
