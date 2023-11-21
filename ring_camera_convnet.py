@@ -46,7 +46,7 @@ def get_unison_shuffled_list_copies(a, b):
 def get_img_dict_from_csv(csv_path):
     img_dict = {}
     with open(csv_path, 'r', newline='') as csvfile:
-        reader = csv.reader(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for row in reader:
             img_path = row[0]
             label = row[1]
@@ -60,7 +60,7 @@ def save_img_dict_to_csv(img_dict, csv_path):
 
     # overwrites any pre-existing file
     with open(os.path.abspath(csv_path), 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for img in img_dict:
             writer.writerow([img, img_dict[img]])
 
@@ -367,8 +367,8 @@ def evaluate_only(show_predict_loop=False):
             label = label_dict[int_label]
 
             # review just the most troublesome, least common classes
-            if label in ['car', 'none']:
-                continue
+            #if label in ['car', 'none']:
+            #    continue
 
             # show the image for a moment before moving on to the next
             cv2.imshow(label, img)

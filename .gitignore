@@ -8,6 +8,9 @@ ring_downloader/ring_api.ini
 ring_downloader/test_token.cache
 ring_convnet_weights/*
 tensorboard_logs/*
+.vscode
 *.gif
 *.npy
 *workspace
+*.csv
+*.bak

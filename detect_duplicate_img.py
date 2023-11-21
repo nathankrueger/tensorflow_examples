@@ -188,7 +188,7 @@ def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_clo
     with open(output_clone_csv, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for original_dup in sorted_images:
-            for clone in sim_dict[original_dup]:
+            for clone in sorted(sim_dict[original_dup]):
                 writer.writerow([clone])
 
 def review_duplicates(csv_path):
@@ -293,6 +293,7 @@ def main():
             writer.writerow(list(tup))
 
 if __name__ == '__main__':
-    #remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', './', [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    review_duplicates('./unique_0p995.csv')
+    duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
+    remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
+    #review_duplicates('./clones_0p9999.csv')
     #main()
