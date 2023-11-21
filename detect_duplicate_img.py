@@ -191,12 +191,12 @@ def write_similarities_for_threshold(sim_tup_list, output_unique_csv, output_clo
             for clone in sorted(sim_dict[original_dup]):
                 writer.writerow([clone])
 
-def review_duplicates(csv_path):
+def review_duplicates(csv_path, img_folder):
     if os.path.exists(csv_path):
         with open(csv_path, 'r', newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
             for row in reader:
-                img_path = os.path.abspath(str(Path('./ring_downloader/ring_data/sept_through_nov_2023/frames/') / row[0]))
+                img_path = os.path.abspath(str(Path(img_folder) / row[0]))
                 cv2.imshow(row[0], cv2.imread(img_path))
                 keypress = cv2.waitKeyEx(delay=0) & 0xFF
 
@@ -294,6 +294,6 @@ def main():
 
 if __name__ == '__main__':
     duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
-    remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    #review_duplicates('./clones_0p9999.csv')
+    #remove_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
+    review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
     #main()

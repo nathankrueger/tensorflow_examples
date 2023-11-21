@@ -1,8 +1,4 @@
-web_test2.py
 .DS_Store
-data_type_experiments.py
-pyplot_animation.py
-web_test.py
 ring_downloader/ring_data/*
 ring_downloader/ring_api.ini
 ring_downloader/test_token.cache
@@ -14,3 +10,8 @@ tensorboard_logs/*
 *workspace
 *.csv
 *.bak
+
+data_type_experiments.py
+pyplot_animation.py
+renamer.py
+matrix_mul.py
