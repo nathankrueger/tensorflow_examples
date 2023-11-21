@@ -117,7 +117,7 @@ def main():
         if not args.silent:
             print(f"[{i+1}/{total_items}] -- ID: {id} | time: {dt} | duration: {duration} | event_type:{event_type}")
         if args.download:
-            filename = os.path.abspath(str(Path(args.output_dir) / f'{date_key}__{i}.mp4'))
+            filename = os.path.abspath(str(Path(args.output_dir) / f'{i:05d}__{date_key}.mp4'))
             if os.path.exists(filename):
                 os.remove(filename)
 

@@ -47,7 +47,7 @@ def extract_frames(video_path, total_videos, video_num, output_dir, frame_interv
         if frame_num > total_frames:
             break
 
-        frame_filename = Path(os.path.abspath(output_dir)) / str(os.path.split(os.path.splitext(video_path)[0])[1] + f'__frame_{frame_num}.jpg')
+        frame_filename = Path(os.path.abspath(output_dir)) / str(os.path.split(os.path.splitext(video_path)[0])[1] + f'__frame_{frame_num:06d}.jpg')
         cv2.imwrite(str(frame_filename), frame)
 
     cap.release()
