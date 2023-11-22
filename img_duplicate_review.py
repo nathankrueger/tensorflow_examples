@@ -18,19 +18,19 @@ def plot_images(image_folder, file1, file2, title):
     img2 = mpimg.imread(img2_path)
 
     # Create a figure with two subplots for the images
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(20, 7))
 
     # Subplot for the first image
     plt.subplot(1, 2, 1)
     plt.imshow(img1)
     plt.axis('off')  # Turn off axis labels
-    plt.title('File 1')
+    plt.title(file1)
 
     # Subplot for the second image
     plt.subplot(1, 2, 2)
     plt.imshow(img2)
     plt.axis('off')  # Turn off axis labels
-    plt.title('File 2')
+    plt.title(file2)
 
     # Set the overall title for the plot
     plt.suptitle(title)

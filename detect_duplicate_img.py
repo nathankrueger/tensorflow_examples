@@ -11,7 +11,6 @@ import queue, threading
 from timeit import default_timer as timer
 from datetime import timedelta
 from pathlib import Path
-from PIL import Image
 
 img_extensions = ['.jpg']
 imagenet_sz = (224, 224, 3)
@@ -293,7 +292,7 @@ def main():
             writer.writerow(list(tup))
 
 if __name__ == '__main__':
-    #duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
+    duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
     #catalog_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    #review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
-    main()
+    review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
+    #main()

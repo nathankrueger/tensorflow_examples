@@ -2,7 +2,7 @@
 ring_downloader/ring_data/*
 ring_downloader/ring_api.ini
 ring_downloader/test_token.cache
-ring_convnet_weights/*
+ring_convnet_model/*
 tensorboard_logs/*
 .vscode
 *.gif
