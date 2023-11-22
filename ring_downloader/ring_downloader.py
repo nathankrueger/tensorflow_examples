@@ -1,23 +1,25 @@
-import json
 import os
 import time
+import json
 import getpass
-from pathlib import Path
-import configparser
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+import configparser, argparse
+import concurrent.futures
+import threading
+import queue
 import numpy as np
-import cv2
-import argparse
 
+from pathlib import Path
 from ring_doorbell import Ring, Auth, exceptions
 from oauthlib.oauth2 import MissingTokenError
 
+num_download_threads=5
 max_retries=5
 file_download_sleep_amt=5
 user_input = False
 cache_file = Path("test_token.cache")
 ring_ini_file = os.path.abspath('ring_api.ini')
+
+print_q = queue.Queue()
 
 def token_updated(token):
     cache_file.write_text(json.dumps(token))
@@ -26,35 +28,55 @@ def otp_callback():
     auth_code = input("2FA code: ")
     return auth_code
 
-# unused
-def show_snapshot(ring, camera_name, filename=None):
-    device = ring.get_device_by_name(camera_name)
-    if filename is not None:
-        successs = device.get_snapshot(filename='test.jpg', delay=1)
-        if successs:
-            img = mpimg.imread('test.jpg')
-            plt.imshow(img)
-            plt.show()
-        else:
-            img_content = device.get_snapshot()
-            image_bytes = np.asarray(bytearray(img_content), dtype="uint8")
-            image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-            cv2.imshow(None, image)
-            cv2.waitKey(0)
+def print_thread():
+    while True:
+        msg = print_q.get()
+        print(msg)
 
 def get_history(ring, camera_name, limit=100):
     device = ring.get_device_by_name(camera_name)
     hist = device.history(limit=limit)
     return hist, device
 
+def get_download_msg(idx, total_items, id, dt, duration, event_type):
+    return f"[{idx+1}/{total_items}] -- ID: {id} | time: {dt} | duration: {duration} | event_type:{event_type}"
+
+def download_thread(output_dir, device, item, idx, total_items, silent):
+    try:
+        id = item['id']
+        duration = item['duration']
+        dt = item['created_at']
+        event_type = item['cv_properties']['detection_type']
+        date_key = dt.strftime('%Y-%m-%d')
+
+        if not silent:
+            print_q.put(get_download_msg(idx, total_items, id, dt, duration, event_type))
+
+        filename = os.path.abspath(str(Path(output_dir) / f'{idx:05d}__{date_key}.mp4'))
+        if os.path.exists(filename):
+            os.remove(filename)
+
+        retries = max_retries
+        while retries > 0:
+            try:
+                time.sleep(file_download_sleep_amt)
+                device.recording_download(recording_id=id, filename=filename)
+                retries = -1
+            except Exception as e:
+                print(e)
+                retries -= 1
+    except Exception as ex:
+        print(f'An error occurred in the dowload worker: {ex}')
+
 def main():
-    parser = argparse.ArgumentParser(description='Label images into a single class')
+    parser = argparse.ArgumentParser(description='Download ring camera data up to a specified limit')
     parser.add_argument('--output_dir', type=str, default='.')
     parser.add_argument('--limit', type=int, required=False, default=10000)
     parser.add_argument('--silent', action='store_true', default=False)
-    parser.add_argument('--camera_name', type=str, required=True)
+    parser.add_argument('--camera_name', type=str, default='Garage Cam')
     parser.add_argument('--download', action='store_true', default=False)
     parser.add_argument('--per_day_limit', type=int, default=10)
+    parser.add_argument('--start_id', type=int, default=0)
 
     args=parser.parse_args()    
 
@@ -81,55 +103,54 @@ def main():
     ring = Ring(auth)
     ring.update_data()
 
-    hist, device = get_history(ring, 'Garage Cam', limit=args.limit)    
+    hist, device = get_history(ring, args.camera_name, limit=args.limit)    
 
     items_by_day = {}
     for item in hist:
-        id = item['id']
         dt = item['created_at']
+        id = item['id']
 
-        date_key = dt.strftime('%Y-%m-%d')
-        if date_key in items_by_day:
-            items_by_day[date_key].append(item)
-        else:
-            items_by_day[date_key] = [item]
+        if int(id) > args.start_id:
+            date_key = dt.strftime('%Y-%m-%d %h-%m-%s')
+            if date_key in items_by_day:
+                items_by_day[date_key].append(item)
+            else:
+                items_by_day[date_key] = [item]
 
-    if args.download:
-        os.makedirs(args.output_dir, exist_ok=True)
-
-    # Limit the items by day to 'per_day_limit' and attempt to get
+    # limit the items by day to 'per_day_limit' and attempt to get
     # a relatively even distribution across the 24hrs of the day by
     # taking a random sample.
     matched_items = []
     for date_key in items_by_day:
         curr_day_items = items_by_day[date_key]
         random_selected_items = np.random.choice(curr_day_items, size=min(args.per_day_limit, len(curr_day_items)), replace=False)
+        random_selected_items.sort()
         matched_items.extend(random_selected_items)
-
     total_items = len(matched_items)
-    for i, item in enumerate(matched_items):
-        id = item['id']
-        duration = item['duration']
-        dt = item['created_at']
-        event_type = item['cv_properties']['detection_type']
-        date_key = dt.strftime('%Y-%m-%d')
 
-        if not args.silent:
-            print(f"[{i+1}/{total_items}] -- ID: {id} | time: {dt} | duration: {duration} | event_type:{event_type}")
-        if args.download:
-            filename = os.path.abspath(str(Path(args.output_dir) / f'{i:05d}__{date_key}.mp4'))
-            if os.path.exists(filename):
-                os.remove(filename)
+    if args.download:
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        # create a print thread
+        t = threading.Thread(target=print_thread, daemon=True)
+        t.start()
 
-            retries = max_retries
-            while retries > 0:
-                try:
-                    time.sleep(file_download_sleep_amt)
-                    device.recording_download(recording_id=id, filename=filename)
-                    retries = -1
-                except Exception as e:
-                    print(e)
-                    retries -= 1
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_download_threads) as exec:
+            for idx, item in enumerate(matched_items):
+                exec.submit(download_thread, args.output_dir, device, item, idx, total_items, args.silent)
+        
+            # wait for all downloads to complete
+            exec.shutdown(wait=True)
+    else:
+        # print what items are matched
+        for idx, item in enumerate(matched_items):
+            id = item['id']
+            duration = item['duration']
+            dt = item['created_at']
+            event_type = item['cv_properties']['detection_type']
+            print(get_download_msg(idx, total_items, id, dt, duration, event_type))
+
+
 
 
 if __name__ == "__main__":
