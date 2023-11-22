@@ -18,7 +18,7 @@ def print_thread():
         print(msg)
 
 def resize_img(image, max_dim):
-    # Height, Width, Channels
+    # height, width, channels
     width = image.shape[1]
     height = image.shape[0]
 
@@ -43,7 +43,7 @@ def extract_frames(video_path, total_videos, video_num, output_dir, frame_interv
         if resize:
             frame = resize_img(frame, resize)
 
-        # quite if we've loaded the last frame
+        # quit if we've loaded the last frame
         if frame_num > total_frames:
             break
 
@@ -65,21 +65,19 @@ def main():
     for vid_type in video_extensions:
         all_videos.extend(glob.glob(str(Path(args.input_dir) / f'*{vid_type}'), recursive=args.recursive))
 
-    # Create a print thread
+    # create a print thread
     t = threading.Thread(target=print_thread, daemon=True)
     t.start()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Launch the workers
+    # launch the workers
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(os.cpu_count(), len(all_videos))) as exec:
         for i, video_path in enumerate(all_videos):
             exec.submit(extract_frames, video_path, len(all_videos), i + 1, args.output_dir, args.frame_interval, args.max_dimension)
         
-        # Wait for all futures to be completed
+        # wait for all futures to be completed
         exec.shutdown(wait=True)
-
-    cv2.destroyAllWindows() # destroy all opened windows
 
 if __name__ == "__main__":
     main()
