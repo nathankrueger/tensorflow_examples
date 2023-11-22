@@ -150,8 +150,5 @@ def main():
             event_type = item['cv_properties']['detection_type']
             print(get_download_msg(idx, total_items, id, dt, duration, event_type))
 
-
-
-
 if __name__ == "__main__":
     main()

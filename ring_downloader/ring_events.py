@@ -61,6 +61,11 @@ def resize_img(image, max_dim):
         ratio = max_dim / height
         return cv2.resize(image, (int(width * ratio), max_dim), interpolation=cv2.INTER_AREA)
 
+"""
+Download the most recent snapshot from the Ring API.  Motion events trigger snapshot
+updates, but you must be careful, the motion event can easily come sooner than the snapshot
+is available, resulting in a race condition.  Snapshots are sized 640x360x3.
+"""
 def retrieve_image(camera_name):
     device = ring.get_device_by_name(camera_name)
     img_content = device.get_snapshot()
@@ -96,8 +101,9 @@ def predict_thread():
 
     # initialize the tensorflow model
     model = tf.keras.models.load_model('ring_convnet_model')
-    #labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
-    labels_to_consider = ['none', 'person']
+    labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
+    img_height = model.input.shape[1]
+    img_width = model.input.shape[2]
     label_dict = {k: v for k, v in enumerate(labels_to_consider)}
 
     while True:
@@ -105,7 +111,7 @@ def predict_thread():
         device_name = evt_queue.get()
         time.sleep(evt_to_snapshot_delay)
         img = retrieve_image(device_name)
-        img = resize_img(img, 400)
+        img = resize_img(img, max(img_height, img_width))
 
         prediction = model.predict(np.expand_dims(img, axis=0))
         imshow_queue.put(img)

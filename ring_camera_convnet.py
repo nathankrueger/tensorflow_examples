@@ -27,11 +27,9 @@ all_numpy_files = [
 use_cpu = False
 max_images = 15000
 
-#labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
-labels_to_consider = ['none', 'person']
+labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
 
 img_extensions = ['.jpg']
-csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max/labels_with_person_0p995unique.csv'
 
 def get_unison_shuffled_np_array_copies(a, b):
     assert len(a) == len(b)
@@ -311,7 +309,7 @@ def load_data(csv_path, force_reload_images=False, max_images=None):
 
         return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
-def train_and_evaluate(force_reload_images):
+def train_and_evaluate(csv_path, force_reload_images):
     if use_cpu:
         tf.config.set_visible_devices([], 'GPU')
 
@@ -346,7 +344,7 @@ def train_and_evaluate(force_reload_images):
                 tf.keras.callbacks.ReduceLROnPlateau(
                     monitor='val_accuracy',
                     factor=0.75,
-                    patience=8,
+                    patience=6,
                     min_lr=0.00005
                 ),
                 tf.keras.callbacks.TensorBoard(
@@ -369,7 +367,7 @@ def train_and_evaluate(force_reload_images):
     )
     print(f"Loss: {loss}, Accuracy: {accuracy}")
 
-def evaluate_only(show_predict_loop=False):
+def evaluate_only(csv_path, show_predict_loop=False):
     train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=False, max_images=max_images)
 
     # load the model from the best epoch checkpoint
@@ -388,9 +386,6 @@ def evaluate_only(show_predict_loop=False):
         image_review_ms = 1500
         label_dict = {k: v for k, v in enumerate(labels_to_consider)}
         predictions = model.predict(test_imgs)
-
-        model = tf.keras.models.Sequential()
-        model.predict()
 
         # loop over each prediction made on the test data
         for idx, img in enumerate(test_imgs):
@@ -446,6 +441,8 @@ def create_predictions_on_unlabeled_data(csv_path, img_folder):
     save_img_dict_to_csv(output_dict, 'unlabeled_imgs.csv')
 
 if __name__ == '__main__':
-    train_and_evaluate(force_reload_images=True)
-    #evaluate_only(show_predict_loop=True)
-    #create_predictions_on_unlabeled_data(csv_path, './ring_downloader/ring_data/sept_through_nov_2023/frames/400max')
+    labeled_csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
+    
+    #train_and_evaluate(labeled_csv_path, force_reload_images=True)
+    evaluate_only(labeled_csv_path, show_predict_loop=True)
+    #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_downloader/ring_data/sept_through_nov_2023/frames/400max')

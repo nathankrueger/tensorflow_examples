@@ -18,7 +18,8 @@ font_color_bgr = (0, 0 , 255)
 
 # could be system dependent; these work on macOS
 esc_key = 27
-del_key = 40
+del_key = 40 #(del is 40 on Kinesis keyboard on macOS)
+#del_key = 127 #(del is 127 on MacBook keyboard)
 left_key = 2
 right_key = 3
 up_key = 0
@@ -52,7 +53,17 @@ def resize_image(image, max_dim):
 
     return resized
 
-def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict, only_show_labels, min_dim):
+def show_and_label_images(
+        output_csv,
+        keymap_file,
+        images,
+        start_idx,
+        default_none,
+        label_dict,
+        only_show_labels,
+        min_dim
+    ):
+
     key_dict = get_key_dict(keymap_file)
 
     esc_requested = False
@@ -72,8 +83,9 @@ def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict
         # during navigation
         if img in label_dict:
             old_label = label_dict[img]
+            old_label = ('none' if default_none else '') if old_label is None else old_label
 
-            if only_show_labels is not None and old_label not in only_show_labels:
+            if (only_show_labels is not None) and (old_label is not None) and (old_label not in only_show_labels):
                 img_idx += 1
                 continue
             else:
@@ -132,7 +144,7 @@ def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict
             # remove a label
             elif keyPressed == del_key:
                 if img in label_dict:
-                    del label_dict[img]
+                    label_dict[img] = None
                     img_idx += 1
                     img_navigate = True
                     break
@@ -169,20 +181,30 @@ def show_and_label_images(output_csv, keymap_file, images, start_idx, label_dict
     
     # serialize the CSV file,
     with open(output_abspath, 'w', newline='') as csvfile:
+        print(f'Writing csv file: {output_abspath}')
         writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
         for img in label_dict:
             writer.writerow([img, label_dict[img]])
 
+"""
+ modes of operation:
+ a) load images from --input_dir, create a new csv file as specified by --output_csv
+ b) load csv file from --output_csv, if --resume is specified, start from the last labeled
+    image, save the csv file to --output_csv
+ c) load images from --input_csv, save files to --output_csv (this is useful when loading a subset
+    of images, such as those identified as unique as opposed to using --input_dir which grabs them all)
+"""
 def main():
     parser = argparse.ArgumentParser(description='Label images into a single class')
     parser.add_argument('--input_dir', type=str, required=False)
     parser.add_argument('--output_csv', type=str, required=True)
     parser.add_argument('--input_csv', type=str, required=False, help='If defined, the labels will be loaded from input_csv instead of output_csv')
     parser.add_argument('--keymap_file', type=str, default=default_keymap_file)
-    parser.add_argument('--resume', action='store_true', default=False, help='If set, labeling will start at the first unlabeled image')
+    parser.add_argument('--resume', action='store_true', default=False, help='If set, labeling will start at the first unlabeled image following the last labeled image')
     parser.add_argument('--only_show_labels', type=str, required=False, help='Supply a comma separated list of labels that we should restrict to reviewing')
-    parser.add_argument('--recursive', action='store_true', default=False)
     parser.add_argument('--min_dimension', type=int, default=1920)
+    parser.add_argument('--image_folder', type=str, default='.', help='Appends a specified folder to images read in from csv')
+    parser.add_argument('--default_none', action='store_true', help="If set, all unlabeled images will be labeled as 'None'")
     args=parser.parse_args()
 
     output_csv_path = os.path.abspath(args.output_csv)
@@ -195,30 +217,34 @@ def main():
     if os.path.exists(csv_to_preload_with):
         with open(csv_to_preload_with, 'r', newline='') as csvfile:
             reader = csv.reader(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            for row in reader:
-                filepath = row[0]
-                label = row[1]
+            for idx, row in enumerate(reader):
+                filepath = os.path.abspath(Path(args.image_folder) / row[0])
+                label = row[1] if (len(row) > 1 and len(row[1]) > 0) else None
                 label_dict[filepath] = label
-                labeled_data_start_idx += 1
+
+                if label is not None:
+                    labeled_data_start_idx = idx
     
     # find all images and sort them, so the order that files are labeled
     # will be repeatable (normally, if the user hasn't skipped ahead)
     if args.input_dir:
         all_images = []
         for img_type in image_extensions:
-            all_images.extend(glob.glob(str(Path(os.path.abspath(args.input_dir)) / f'*{img_type}'), recursive=args.recursive))
+            all_images.extend(glob.glob(str(Path(os.path.abspath(args.input_dir)) / f'*{img_type}')))
         all_images.sort()
     else:
         all_images = list(label_dict.keys())
 
+    # the main program loop
     show_and_label_images(
-        output_csv_path,
-        keymap_file_path,
-        all_images,
-        labeled_data_start_idx - 1 if args.resume else 0,
-        label_dict,
-        args.only_show_labels,
-        args.min_dimension
+        output_csv=output_csv_path,
+        keymap_file=keymap_file_path,
+        images=all_images,
+        start_idx=labeled_data_start_idx + 1 if args.resume else 0,
+        default_none=args.default_none,
+        label_dict=label_dict,
+        only_show_labels=args.only_show_labels,
+        min_dim=args.min_dimension
     )
     cv2.destroyAllWindows()
 
