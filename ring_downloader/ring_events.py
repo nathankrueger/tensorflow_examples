@@ -18,19 +18,29 @@ from ring_doorbell import Ring, Auth, exceptions
 from oauthlib.oauth2 import MissingTokenError
 from gtts import gTTS
 
+# this is a critical parameter... the motion event vs. snaphot content update are
+# unfortunately asynchronous in ring's API.  if we set this param too large, then
+# the delay to report the prediciton witll be large, and effectively the inference 
+# latency will be increased.  if we set this param too small, then we can get a stale
+# snapshot from 30s to 5min old, and the inference will be out of sync with the current evt.
+evt_to_snapshot_delay = 5
+
+img_review_delay = 5
+
 cache_file = Path("ring_downloader/test_token.cache")
 ring_ini_file = os.path.abspath('ring_downloader/ring_api.ini')
 ring = None
 
 callback_queue = queue.Queue()
 evt_queue = queue.Queue()
+imshow_queue = queue.Queue()
 callback_lock = Lock()
 
 # a dictionary of event label to list of tuples
 # each tuple is a pair of (function, (arg1, .. argN))
 callbacks_dict = {}
 
-cameras_to_listen_on = ['Garage Cam', 'Shop Floodlight Camera']
+cameras_to_listen_on = ['Garage Cam']
 
 def token_updated(token):
     cache_file.write_text(json.dumps(token))
@@ -68,8 +78,11 @@ def on_motion(event):
 
 def speak(text, tld='en'):
     with tempfile.NamedTemporaryFile() as tmpfile:
-        gTTS(text=text, lang='en', tld=tld, slow=False).save(tmpfile.name)
-        playsound.playsound(tmpfile.name)
+        try:
+            gTTS(text=text, lang='en', tld=tld, slow=False).save(tmpfile.name)
+            playsound.playsound(tmpfile.name)
+        except:
+            pass
 
 def callback_thread():
     while True:
@@ -82,17 +95,23 @@ def predict_thread():
     global callback_lock
 
     # initialize the tensorflow model
-    model = tf.keras.models.load_model('ring_convnet_weights/checkpt.ckpt')
-    labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer']
+    model = tf.keras.models.load_model('ring_convnet_model')
+    #labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
+    labels_to_consider = ['none', 'person']
     label_dict = {k: v for k, v in enumerate(labels_to_consider)}
 
     while True:
+        print('Waiting for next ring event...')
         device_name = evt_queue.get()
+        time.sleep(evt_to_snapshot_delay)
         img = retrieve_image(device_name)
         img = resize_img(img, 400)
+
         prediction = model.predict(np.expand_dims(img, axis=0))
+        imshow_queue.put(img)
         int_label = tf.argmax(prediction[0]).numpy()
         label = label_dict[int_label]
+        print(f'Prediction: {prediction}: {label}')
 
         # Add our own default callback 
         message_text = f"There's a {label} at your {device_name}"
@@ -105,10 +124,7 @@ def predict_thread():
                 for cb in callbacks_list:
                     callback_queue.put(cb)
 
-def main():
-    # don't use GPU for running one prediction at a time...
-    tf.config.set_visible_devices([], 'GPU')
-
+def initialize_ring(install_listener):
     if cache_file.is_file():
         auth = Auth("NEW_PROJECT/1.0", json.loads(cache_file.read_text()), token_updated)
     else:
@@ -127,11 +143,25 @@ def main():
     ring.update_data()
 
     # register the callback function for motion events
-    ring.start_event_listener()
-    ring.add_event_listener_callback(on_motion)
+    if install_listener:
+        ring.start_event_listener()
+        ring.add_event_listener_callback(on_motion)
+
+def main():
+    # don't use GPU for running one prediction at a time...
+    tf.config.set_visible_devices([], 'GPU')
+
+    # initialize the ring library
+    try:
+        install_listener = True
+        print(f'Initializing Ring (install_listener={install_listener})...')
+        initialize_ring(install_listener)
+        print('Finished initializing Ring...')
+    except Exception as ex:
+        print(f'Failed to initialize Ring with exception: {ex}')
 
     # add a thread which runs the inference and triggers
-    # callbacks to occur on the callback_thread if needed
+    # callbacks to occur on the callback_thread as needed
     pt = Thread(target=predict_thread, daemon=True)
     pt.start()
 
@@ -139,10 +169,30 @@ def main():
     ct = Thread(target=callback_thread, daemon=True)
     ct.start()
 
+    # keep the main thread running to listen for image review events.
+    # the cv2 library functions must be executed from the main thread.
     try:
-        # Keep the script running to listen for events
+        idx = 0
+        img_shown = False
         while True:
-            time.sleep(1)
+            print('Main thread waiting for imshow events...')
+
+            try:
+                img = imshow_queue.get(timeout=img_review_delay)
+            except queue.Empty as ex:
+                if img_shown:
+                    cv2.destroyAllWindows()
+                    cv2.waitKey(1)
+                    img_shown = False
+                continue
+
+            cv2.destroyAllWindows()
+            cv2.imshow(f'motion_capture_{idx}', img)
+            img_shown = True
+            cv2.waitKey(1)
+
+            idx += 1
+
     except KeyboardInterrupt:
         pass
 
