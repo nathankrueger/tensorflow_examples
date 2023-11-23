@@ -27,8 +27,8 @@ evt_to_snapshot_delay = 5
 
 img_review_delay = 5
 
-cache_file = Path("ring_downloader/test_token.cache")
-ring_ini_file = os.path.abspath('ring_downloader/ring_api.ini')
+cache_file = Path('test_token.cache')
+ring_ini_file = os.path.abspath('ring_api.ini')
 ring = None
 
 callback_queue = queue.Queue()

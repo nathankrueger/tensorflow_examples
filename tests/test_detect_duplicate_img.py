@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 
 # import the code under test
-sys.path.insert(0, os.path.abspath(Path(os.path.dirname(__file__)) / '..'))
+sys.path.insert(0, os.path.abspath(Path(os.path.dirname(__file__)) / '..' / 'img_vid_processing'))
 import detect_duplicate_img
 
 def test_write_similarities_for_threshold():

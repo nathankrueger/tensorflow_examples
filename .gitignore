@@ -2,7 +2,7 @@
 ring_camera/ring_data/*
 ring_camera/ring_api.ini
 ring_camera/test_token.cache
-ring_convnet_model/*
+ring_camera/ring_convnet_model/*
 tensorboard_logs/*
 .vscode
 *.gif
