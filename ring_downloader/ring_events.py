@@ -41,6 +41,7 @@ callback_lock = Lock()
 callbacks_dict = {}
 
 cameras_to_listen_on = ['Garage Cam']
+#cameras_to_listen_on = ['Shop Floodlight Camera']
 
 def token_updated(token):
     cache_file.write_text(json.dumps(token))
@@ -67,11 +68,17 @@ updates, but you must be careful, the motion event can easily come sooner than t
 is available, resulting in a race condition.  Snapshots are sized 640x360x3.
 """
 def retrieve_image(camera_name):
-    device = ring.get_device_by_name(camera_name)
-    img_content = device.get_snapshot()
-    image_bytes = np.asarray(bytearray(img_content), dtype="uint8")
-    image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
-    return image
+    result = None
+    try:
+        device = ring.get_device_by_name(camera_name)
+        img_content = device.get_snapshot()
+        image_bytes = np.asarray(bytearray(img_content), dtype="uint8")
+        image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+        result = image
+    except Exception as ex:
+        print('Failed to retrieve snapshot: {ex}')
+
+    return result
 
 def on_motion(event):
     print(f"Motion detected at {datetime.now()}")
@@ -111,8 +118,12 @@ def predict_thread():
         device_name = evt_queue.get()
         time.sleep(evt_to_snapshot_delay)
         img = retrieve_image(device_name)
-        img = resize_img(img, max(img_height, img_width))
 
+        # in case Ring has an issue
+        if img is None:
+            continue
+
+        img = resize_img(img, max(img_height, img_width))
         prediction = model.predict(np.expand_dims(img, axis=0))
         imshow_queue.put(img)
         int_label = tf.argmax(prediction[0]).numpy()

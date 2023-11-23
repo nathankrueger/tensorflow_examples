@@ -121,7 +121,7 @@ def split_data_into_groups_seq(all_images, all_labels):
 
     return (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels)
 
-def split_data_into_groups_bucketize(img_dict, max_images=None):
+def split_data_into_groups_bucketize(img_dict, max_images=None, force_even_distribution=False):
     # test_percentage = 1 - (train_percentage + val_percentage)
     train_percentage = 0.6
     val_percentage = 0.2
@@ -147,6 +147,17 @@ def split_data_into_groups_bucketize(img_dict, max_images=None):
             label_buckets[label].append(all_images[idx])
         else:
             label_buckets[label] = [all_images[idx]]
+
+    # force an even distribution by finding the lowest represented class
+    # and only choosing that many samples for every other class
+    if force_even_distribution:
+        label_buckets_force_even_dist = {}
+        min_rep_class = min(map(len, label_buckets.values()))
+        for label in label_buckets:
+            class_list = label_buckets[label]
+            random.shuffle(class_list)
+            label_buckets_force_even_dist[label] = class_list[:min_rep_class]
+        label_buckets = label_buckets_force_even_dist
 
     train_imgs = None
     train_labels = None
@@ -205,20 +216,22 @@ def get_compiled_model(img_shape, num_outputs):
     data_augmentation = tf.keras.Sequential(
         [
             tf.keras.layers.RandomFlip('horizontal'),
-            tf.keras.layers.RandomRotation(0.1),
-            tf.keras.layers.RandomZoom(0.2)
+            #tf.keras.layers.RandomRotation(0.1),
+            #tf.keras.layers.RandomZoom(0.2)
         ]
     )
 
     inputs = tf.keras.Input(shape=img_shape)
     x = data_augmentation(inputs) if use_augmentation else inputs
     x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
-    x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+    x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
     x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
     x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
     x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
+    x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+    x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.Flatten()(x)
     x = tf.keras.layers.Dropout(0.5)(x)
 
@@ -246,10 +259,10 @@ def display_class_histogram(msg, imgs, img_dict, int_to_str_label_dict):
 
     if msg is not None:
         print(msg)
-    for str_label, count in histogram.items():
+    for str_label, count in sorted(histogram.items()):
         print(f'{str_label}: {count}')
 
-def load_data(csv_path, force_reload_images=False, max_images=None):
+def load_data(csv_path, force_reload_images=False, max_images=None, force_even_distribution=False):
     # only allow load from file if we have all the necessary content
     all_files_on_disk = True
     for file in all_numpy_files:
@@ -278,7 +291,7 @@ def load_data(csv_path, force_reload_images=False, max_images=None):
 
         # get lists of equal order of (train, val, test) images and labels that are split by a requested percentage on a class by class
         # basis.  this way, if you ask for 60% training data, you'll get 60% of each class (which aren't going to be equally represented)
-        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images)
+        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images, force_even_distribution)
 
         # dump out histograms
         display_class_histogram(os.linesep + 'Histogram for training data:', train_imgs, img_dict, labels_to_consider)
@@ -313,7 +326,12 @@ def train_and_evaluate(csv_path, force_reload_images):
     if use_cpu:
         tf.config.set_visible_devices([], 'GPU')
 
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=force_reload_images, max_images=max_images)
+    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(
+                                                                                    csv_path,
+                                                                                    force_reload_images=force_reload_images,
+                                                                                    max_images=max_images,
+                                                                                    force_even_distribution=False       
+                                                                                )
 
     # how many unique labels are there?
     num_labels = get_num_unique_labels(train_labels)
@@ -324,6 +342,7 @@ def train_and_evaluate(csv_path, force_reload_images):
     # get the model and show a brief summary of it
     model = get_compiled_model(img_shape=img_shape, num_outputs=num_labels)
     print(model.summary())
+    tf.keras.utils.plot_model(model=model, to_file='model.png', show_shapes=True)
 
     # train the model, allowing user CTRL-C to quit the process early
     try:
@@ -331,7 +350,7 @@ def train_and_evaluate(csv_path, force_reload_images):
             train_imgs,
             train_labels,
             validation_data=(val_imgs, val_labels),
-            epochs=100,
+            epochs=200,
             callbacks=[
                 #tf.keras.callbacks.EarlyStopping(patience=15),
                 tf.keras.callbacks.ModelCheckpoint(
@@ -343,8 +362,8 @@ def train_and_evaluate(csv_path, force_reload_images):
                 ),
                 tf.keras.callbacks.ReduceLROnPlateau(
                     monitor='val_accuracy',
-                    factor=0.75,
-                    patience=6,
+                    factor=0.8,
+                    patience=4,
                     min_lr=0.00005
                 ),
                 tf.keras.callbacks.TensorBoard(
@@ -367,8 +386,8 @@ def train_and_evaluate(csv_path, force_reload_images):
     )
     print(f"Loss: {loss}, Accuracy: {accuracy}")
 
-def evaluate_only(csv_path, show_predict_loop=False):
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=False, max_images=max_images)
+def evaluate_only(csv_path, show_predict_loop=False, force_reload_img=False):
+    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=force_reload_img, max_images=max_images)
 
     # load the model from the best epoch checkpoint
     model = tf.keras.models.load_model(model_folder)
@@ -443,6 +462,6 @@ def create_predictions_on_unlabeled_data(csv_path, img_folder):
 if __name__ == '__main__':
     labeled_csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
     
-    #train_and_evaluate(labeled_csv_path, force_reload_images=True)
-    evaluate_only(labeled_csv_path, show_predict_loop=True)
+    train_and_evaluate(labeled_csv_path, force_reload_images=True)
+    #evaluate_only(labeled_csv_path, show_predict_loop=True, force_reload_img=False)
     #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_downloader/ring_data/sept_through_nov_2023/frames/400max')

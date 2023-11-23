@@ -6,7 +6,10 @@ ring_convnet_model/*
 tensorboard_logs/*
 .vscode
 *.gif
+*.png
+*.jpg
 *.npy
+*.zip
 *workspace
 *.csv
 *.bak
