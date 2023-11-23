@@ -1,7 +1,7 @@
 .DS_Store
-ring_downloader/ring_data/*
-ring_downloader/ring_api.ini
-ring_downloader/test_token.cache
+ring_camera/ring_data/*
+ring_camera/ring_api.ini
+ring_camera/test_token.cache
 ring_convnet_model/*
 tensorboard_logs/*
 .vscode
