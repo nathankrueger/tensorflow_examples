@@ -27,8 +27,8 @@ evt_to_snapshot_delay = 5
 
 img_review_delay = 5
 
-cache_file = Path('test_token.cache')
-ring_ini_file = os.path.abspath('ring_api.ini')
+cache_file = Path(os.path.dirname(__file__)) / 'test_token.cache'
+ring_ini_file = Path(os.path.dirname(__file__)) / 'ring_api.ini'
 ring = None
 
 callback_queue = queue.Queue()
@@ -107,7 +107,7 @@ def predict_thread():
     global callback_lock
 
     # initialize the tensorflow model
-    model = tf.keras.models.load_model('ring_convnet_model')
+    model = tf.keras.models.load_model('ring_camera/ring_convnet_model/keras')
     labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
     img_height = model.input.shape[1]
     img_width = model.input.shape[2]

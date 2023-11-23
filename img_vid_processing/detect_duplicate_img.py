@@ -292,7 +292,7 @@ def main():
             writer.writerow(list(tup))
 
 if __name__ == '__main__':
-    duplicate_csv_output_folder = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max'
-    #catalog_duplicates('./ring_downloader/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
-    review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_downloader/ring_data/sept_through_nov_2023/frames/originals')
+    duplicate_csv_output_folder = './ring_camera/ring_data/sept_through_nov_2023/frames/400max'
+    catalog_duplicates('./ring_camera/ring_data/sept_through_nov_2023/frames/400max/similarities.csv.full', duplicate_csv_output_folder, [0.99, 0.995, 0.999, 0.9995, 0.9999])
+    #review_duplicates(csv_path=str(Path(duplicate_csv_output_folder) / 'unique_0p99.csv'), img_folder='./ring_camera/ring_data/sept_through_nov_2023/frames/originals')
     #main()

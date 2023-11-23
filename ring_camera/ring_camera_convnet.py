@@ -8,13 +8,17 @@ import cv2
 from PIL import Image
 from pathlib import Path
 
-model_folder = "ring_convnet_model"
-np_train_images_file = 'train_images.npy'
-np_train_labels_file = 'train_labels.npy'
-np_val_images_file = 'val_images.npy'
-np_val_labels_file = 'val_labels.npy'
-np_test_images_file = 'test_images.npy'
-np_test_labels_file = 'test_labels.npy'
+this_folder_path = Path(os.path.dirname(__file__))
+model_folder = str(this_folder_path / "ring_convnet_model")
+keras_model_folder = str(Path(model_folder) / "keras")
+
+np_train_images_file = str(Path(model_folder) / 'train_images.npy')
+np_train_labels_file = str(Path(model_folder) / 'train_labels.npy')
+np_val_images_file = str(Path(model_folder) / 'val_images.npy')
+np_val_labels_file = str(Path(model_folder) / 'val_labels.npy')
+np_test_images_file = str(Path(model_folder) / 'test_images.npy')
+np_test_labels_file = str(Path(model_folder) / 'test_labels.npy')
+
 all_numpy_files = [
     np_train_images_file,
     np_train_labels_file,
@@ -342,7 +346,7 @@ def train_and_evaluate(csv_path, force_reload_images):
     # get the model and show a brief summary of it
     model = get_compiled_model(img_shape=img_shape, num_outputs=num_labels)
     print(model.summary())
-    tf.keras.utils.plot_model(model=model, to_file='model.png', show_shapes=True)
+    tf.keras.utils.plot_model(model=model, to_file=str(Path(model_folder) / 'model.png'), show_shapes=True)
 
     # train the model, allowing user CTRL-C to quit the process early
     try:
@@ -354,7 +358,7 @@ def train_and_evaluate(csv_path, force_reload_images):
             callbacks=[
                 #tf.keras.callbacks.EarlyStopping(patience=15),
                 tf.keras.callbacks.ModelCheckpoint(
-                    filepath=model_folder,
+                    filepath=keras_model_folder,
                     save_weights_only=False,
                     save_best_only=True,
                     monitor='val_accuracy',
@@ -367,7 +371,7 @@ def train_and_evaluate(csv_path, force_reload_images):
                     min_lr=0.00005
                 ),
                 tf.keras.callbacks.TensorBoard(
-                    log_dir=os.path.abspath("./tensorboard_logs")
+                    log_dir=os.path.abspath(str(Path(model_folder) / "tensorboard_logs"))
                 )
             ],
             batch_size=64
@@ -378,7 +382,7 @@ def train_and_evaluate(csv_path, force_reload_images):
 
     # load in the weights from the epoch with the maximum accuracy
     # and evaluate the model on the test data
-    model.load_weights(model_folder).expect_partial()
+    model.load_weights(keras_model_folder).expect_partial()
     loss, accuracy = model.evaluate(
         test_imgs,
         test_labels,
@@ -390,7 +394,7 @@ def evaluate_only(csv_path, show_predict_loop=False, force_reload_img=False):
     train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=force_reload_img, max_images=max_images)
 
     # load the model from the best epoch checkpoint
-    model = tf.keras.models.load_model(model_folder)
+    model = tf.keras.models.load_model(keras_model_folder)
     print(model.summary())
 
     model.evaluate(
@@ -433,7 +437,7 @@ def create_predictions_on_unlabeled_data(csv_path, img_folder):
     total_imgs_to_predict = len(all_img_paths)
 
     # load the model from the best epoch checkpoint
-    model = tf.keras.models.load_model(model_folder)
+    model = tf.keras.models.load_model(keras_model_folder)
     print(model.summary())
 
     output_dict = {}
@@ -460,8 +464,8 @@ def create_predictions_on_unlabeled_data(csv_path, img_folder):
     save_img_dict_to_csv(output_dict, 'unlabeled_imgs.csv')
 
 if __name__ == '__main__':
-    labeled_csv_path = './ring_downloader/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
+    labeled_csv_path = './ring_camera/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
     
     train_and_evaluate(labeled_csv_path, force_reload_images=True)
     #evaluate_only(labeled_csv_path, show_predict_loop=True, force_reload_img=False)
-    #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_downloader/ring_data/sept_through_nov_2023/frames/400max')
+    #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_camera/ring_data/sept_through_nov_2023/frames/400max')
