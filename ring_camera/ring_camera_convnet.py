@@ -8,32 +8,9 @@ import cv2
 from PIL import Image
 from pathlib import Path
 
-this_folder_path = Path(os.path.dirname(__file__))
-model_folder = str(this_folder_path / "ring_convnet_model")
-keras_model_folder = str(Path(model_folder) / "keras")
-
-np_train_images_file = str(Path(model_folder) / 'train_images.npy')
-np_train_labels_file = str(Path(model_folder) / 'train_labels.npy')
-np_val_images_file = str(Path(model_folder) / 'val_images.npy')
-np_val_labels_file = str(Path(model_folder) / 'val_labels.npy')
-np_test_images_file = str(Path(model_folder) / 'test_images.npy')
-np_test_labels_file = str(Path(model_folder) / 'test_labels.npy')
-
-all_numpy_files = [
-    np_train_images_file,
-    np_train_labels_file,
-    np_val_images_file,
-    np_val_labels_file,
-    np_test_images_file,
-    np_test_labels_file
-]
-
-use_cpu = False
-max_images = 15000
-
-labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
-
-img_extensions = ['.jpg']
+THIS_FOLDER_PATH = Path(os.path.dirname(__file__))
+ESC_KEY = 27
+IMG_EXTENSIONS = ['.jpg']
 
 def get_unison_shuffled_np_array_copies(a, b):
     assert len(a) == len(b)
@@ -70,7 +47,7 @@ def save_img_dict_to_csv(img_dict, csv_path):
 
 def get_all_images_in_folder(folder, recursive=False):
     all_images = []
-    for img_type in img_extensions:
+    for img_type in IMG_EXTENSIONS:
         all_images.extend(glob.glob(str(Path(os.path.abspath(folder)) / f'*{img_type}'), recursive=recursive))
     all_images.sort()
     return all_images
@@ -214,46 +191,6 @@ def split_data_into_groups_bucketize(img_dict, max_images=None, force_even_distr
 
     return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
-def get_compiled_model(img_shape, num_outputs):
-    use_augmentation = True
-
-    data_augmentation = tf.keras.Sequential(
-        [
-            tf.keras.layers.RandomFlip('horizontal'),
-            #tf.keras.layers.RandomRotation(0.1),
-            #tf.keras.layers.RandomZoom(0.2)
-        ]
-    )
-
-    inputs = tf.keras.Input(shape=img_shape)
-    x = data_augmentation(inputs) if use_augmentation else inputs
-    x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
-    x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
-    x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
-    x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-    x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-    x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-    x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, activation='relu')(x)
-    x = tf.keras.layers.Flatten()(x)
-    x = tf.keras.layers.Dropout(0.5)(x)
-
-    outputs = tf.keras.layers.Dense(num_outputs, activation='softmax')(x)
-
-    model = tf.keras.Model(inputs=inputs, outputs=outputs)
-
-    model.compile(
-        optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001),
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
-    )
-
-    return model
-
 def display_class_histogram(msg, imgs, img_dict, int_to_str_label_dict):
     histogram = {}
     for img in imgs:
@@ -269,232 +206,381 @@ def display_class_histogram(msg, imgs, img_dict, int_to_str_label_dict):
     for str_label, count in sorted(histogram.items()):
         print(f'{str_label}: {count}')
 
-def load_data(csv_path, force_reload_images=False, max_images=None, force_even_distribution=False):
-    # only allow load from file if we have all the necessary content
-    all_files_on_disk = True
-    for file in all_numpy_files:
-        if not os.path.exists(file):
-            all_files_on_disk = False
-            break
+"""
+Get a dictionary of integer label to string label
+"""
+def get_label_dict(filepath):
+    img_dict = {}
+    with open(filepath, 'r', newline='') as labelfile:
+        line = labelfile.readline()
+        for idx, label in enumerate(line.split(',')):
+            img_dict[idx] = label
+    return img_dict
 
-    # if all the files are present, or if we are forcing the image load (forcing introduces a new shuffle of the data)
-    if all_files_on_disk and not force_reload_images:
-        train_imgs = np.load(np_train_images_file)
-        train_labels = np.load(np_train_labels_file)
-        val_imgs = np.load(np_val_images_file)
-        val_labels = np.load(np_val_labels_file)
-        test_imgs = np.load(np_test_images_file)
-        test_labels = np.load(np_test_labels_file)
-        return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
-    else:
-        # load in csv file (file_path --> label)
-        img_dict = get_img_dict_from_csv(csv_path)
+class RingCameraConvnet:
+    max_images = 15000
+    use_cpu = False
 
-        # map labels to consider to integer values used by net
-        unique_labels = {str_label: int_label for int_label, str_label in enumerate(labels_to_consider)}
+    model_folder_path = THIS_FOLDER_PATH / "ring_convnet_model"
+    model_folder = str(model_folder_path)
+    keras_model_folder = str(model_folder_path / "keras")
+    label_file = str(model_folder_path / "labels.csv")
 
-        # convert labels to integer values
-        img_dict = {img_path: unique_labels[str_label] for img_path, str_label in img_dict.items() if str_label in labels_to_consider}
+    np_train_images_file = str(model_folder_path / 'train_images.npy')
+    np_train_labels_file = str(model_folder_path / 'train_labels.npy')
+    np_val_images_file = str(model_folder_path / 'val_images.npy')
+    np_val_labels_file = str(model_folder_path / 'val_labels.npy')
+    np_test_images_file = str(model_folder_path / 'test_images.npy')
+    np_test_labels_file = str(model_folder_path / 'test_labels.npy')
 
-        # get lists of equal order of (train, val, test) images and labels that are split by a requested percentage on a class by class
-        # basis.  this way, if you ask for 60% training data, you'll get 60% of each class (which aren't going to be equally represented)
-        train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images, force_even_distribution)
+    all_numpy_files = [
+        np_train_images_file,
+        np_train_labels_file,
+        np_val_images_file,
+        np_val_labels_file,
+        np_test_images_file,
+        np_test_labels_file
+    ]
 
-        # dump out histograms
-        display_class_histogram(os.linesep + 'Histogram for training data:', train_imgs, img_dict, labels_to_consider)
-        display_class_histogram(os.linesep + 'Histogram for validation data:', val_imgs, img_dict, labels_to_consider)
-        display_class_histogram(os.linesep + 'Histogram for test data:', test_imgs, img_dict, labels_to_consider)
+    def __init__(self, labeled_csv_images=None, labels_to_consider=None):
+        self.__labeled_images_csv = labeled_csv_images
 
-        # convert list of images to list of tensors
-        print(f"Coverting {len(train_imgs) + len(val_imgs) + len(test_imgs)} images to tensor...")
-        train_imgs = list(map(convert_img_to_tensor, train_imgs))
-        val_imgs = list(map(convert_img_to_tensor, val_imgs))
-        test_imgs = list(map(convert_img_to_tensor, test_imgs))
+        # if no explicit list of labels to consider is passed in, use the default label file
+        if labels_to_consider == None:
+            if os.path.exists(RingCameraConvnet.label_file):
+                self.__label_dict = get_label_dict(RingCameraConvnet.label_file)
+            else:
+                raise Exception(f'No labels provided, and model csv file {RingCameraConvnet.label_file} is missing')
+        else:
+            self.__label_dict = {int_label: str_label for int_label, str_label in enumerate(labels_to_consider)}
 
-        # convert lists to np array
-        train_imgs = np.array(train_imgs)
-        train_labels = np.array(train_labels)
-        val_imgs = np.array(val_imgs)
-        val_labels = np.array(val_labels)
-        test_imgs = np.array(test_imgs)
-        test_labels = np.array(test_labels)
+        self.__train_imgs = None
+        self.__train_labels = None
+        self.__val_imgs = None
+        self.__val_labels = None
+        self.__test_imgs = None
+        self.__test_labels = None
+        self.__data_loaded = False
 
-        # save the results for next time!
-        np.save(np_train_images_file, train_imgs)
-        np.save(np_train_labels_file, train_labels)
-        np.save(np_val_images_file, val_imgs)
-        np.save(np_val_labels_file, val_labels)
-        np.save(np_test_images_file, test_imgs)
-        np.save(np_test_labels_file, test_labels)
+        self.__model = None
 
-        return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
+    def __confirm_data_is_loaded(self, ctx):
+        if not self.__data_loaded:
+            raise Exception(f'{ctx} requires loaded data.')
 
-def train_and_evaluate(csv_path, force_reload_images):
-    if use_cpu:
-        tf.config.set_visible_devices([], 'GPU')
+    def __confirm_model_is_loaded(self, ctx):
+        if self.__model is None:
+            raise Exception(f'{ctx} requires a loaded model')
 
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(
-                                                                                    csv_path,
-                                                                                    force_reload_images=force_reload_images,
-                                                                                    max_images=max_images,
-                                                                                    force_even_distribution=False       
-                                                                                )
+    def __confirm_labeled_csv_is_defined(self, ctx):
+        if self.__labeled_images_csv is None:
+            raise Exception(f'{ctx} requires a labeled images and data CSV file')
 
-    # how many unique labels are there?
-    num_labels = get_num_unique_labels(train_labels)
+    def __confirm_data_and_model_are_valid(self, ctx):
+        self.__confirm_data_is_loaded(ctx)
+        self.__confirm_model_is_loaded(ctx)
 
-    # what's the image shape for all images in this dataset
-    img_shape = train_imgs[0].shape
+    def __report_on_mispredictions(self, predictions):
+        self.__confirm_data_is_loaded('Reporting mispredictions')
 
-    # get the model and show a brief summary of it
-    model = get_compiled_model(img_shape=img_shape, num_outputs=num_labels)
-    print(model.summary())
-    tf.keras.utils.plot_model(model=model, to_file=str(Path(model_folder) / 'model.png'), show_shapes=True)
+        mis_predicts = {}
 
-    # train the model, allowing user CTRL-C to quit the process early
-    try:
-        model.fit(
-            train_imgs,
-            train_labels,
-            validation_data=(val_imgs, val_labels),
-            epochs=200,
-            callbacks=[
-                #tf.keras.callbacks.EarlyStopping(patience=15),
-                tf.keras.callbacks.ModelCheckpoint(
-                    filepath=keras_model_folder,
-                    save_weights_only=False,
-                    save_best_only=True,
-                    monitor='val_accuracy',
-                    mode='max'
-                ),
-                tf.keras.callbacks.ReduceLROnPlateau(
-                    monitor='val_accuracy',
-                    factor=0.8,
-                    patience=4,
-                    min_lr=0.00005
-                ),
-                tf.keras.callbacks.TensorBoard(
-                    log_dir=os.path.abspath(str(Path(model_folder) / "tensorboard_logs"))
-                )
-            ],
+        for idx, int_pred_label in enumerate(predictions):
+            int_expect_label = self.__test_labels[idx]
+            if int_pred_label != int_expect_label:
+                str_pred_label = self.__label_dict[int_pred_label]
+                str_expect_label = self.__label_dict[int_expect_label]
+
+                key = (str_expect_label, str_pred_label)
+                if key in mis_predicts:
+                    mis_predicts[key] += 1
+                else:
+                    mis_predicts[key] = 1
+
+        # sort by value, we want to see the most often mistakes first
+        mis_predicts = dict(sorted(mis_predicts.items(), key=lambda item: item[1], reverse=True))
+
+        for mp in mis_predicts.items():
+            comp = mp[0]
+            num = mp[1]
+
+            expect = comp[0]
+            actual = comp[1]
+
+            print(f'{expect} predicted as {actual} {num} times...')
+
+    """
+    Return the keras model.  Use with caution.
+    """
+    def get_model(self):
+        return self.__model
+
+    """
+    Load data either from numpy array on disk (fast), or image files directly (slow)
+    """
+    def load_data(self, force_reload_images=False, max_images=None, force_even_distribution=False):
+        # only allow load from file if we have all the necessary content
+        all_files_on_disk = True
+        for file in RingCameraConvnet.all_numpy_files:
+            if not os.path.exists(file):
+                all_files_on_disk = False
+                break
+
+        # if all the files are present, or if we are forcing the image load (forcing introduces a new shuffle of the data)
+        if all_files_on_disk and not force_reload_images:
+            self.__train_imgs = np.load(RingCameraConvnet.np_train_images_file)
+            self.__train_labels = np.load(RingCameraConvnet.np_train_labels_file)
+            self.__val_imgs = np.load(RingCameraConvnet.np_val_images_file)
+            self.__val_labels = np.load(RingCameraConvnet.np_val_labels_file)
+            self.__test_imgs = np.load(RingCameraConvnet.np_test_images_file)
+            self.__test_labels = np.load(RingCameraConvnet.np_test_labels_file)
+            self.__data_loaded = True
+        else:
+            self.__confirm_labeled_csv_is_defined('Loading image and label data from CSV')
+
+            # load in csv file (file_path --> label)
+            img_dict = get_img_dict_from_csv(self.__labeled_images_csv)
+
+            # map labels to consider to integer values used by net
+            unique_labels = {str_label: int_label for int_label, str_label in enumerate(self.__label_dict)}
+
+            # convert labels to integer values
+            img_dict = {img_path: unique_labels[str_label] for img_path, str_label in img_dict.items() if str_label in self.__label_dict}
+
+            # get lists of equal order of (train, val, test) images and labels that are split by a requested percentage on a class by class
+            # basis.  this way, if you ask for 60% training data, you'll get 60% of each class (which aren't going to be equally represented)
+            train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images, force_even_distribution)
+
+            # dump out histograms
+            display_class_histogram(os.linesep + 'Histogram for training data:', train_imgs, img_dict, self.__label_dict)
+            display_class_histogram(os.linesep + 'Histogram for validation data:', val_imgs, img_dict, self.__label_dict)
+            display_class_histogram(os.linesep + 'Histogram for test data:', test_imgs, img_dict, self.__label_dict)
+
+            # convert list of images to list of tensors
+            print(f'Coverting {len(train_imgs) + len(val_imgs) + len(test_imgs)} images to tensor...')
+            train_imgs = list(map(convert_img_to_tensor, train_imgs))
+            val_imgs = list(map(convert_img_to_tensor, val_imgs))
+            test_imgs = list(map(convert_img_to_tensor, test_imgs))
+
+            # convert lists to np array
+            self.__train_imgs = np.array(train_imgs)
+            self.__train_labels = np.array(train_labels)
+            self.__val_imgs = np.array(val_imgs)
+            self.__val_labels = np.array(val_labels)
+            self.__test_imgs = np.array(test_imgs)
+            self.__test_labels = np.array(test_labels)
+            self.__data_loaded = True
+
+            # save the results for next time!
+            np.save(RingCameraConvnet.np_train_images_file, self.__train_imgs)
+            np.save(RingCameraConvnet.np_train_labels_file, self.__train_labels)
+            np.save(RingCameraConvnet.np_val_images_file, self.__val_imgs)
+            np.save(RingCameraConvnet.np_val_labels_file, self.__val_labels)
+            np.save(RingCameraConvnet.np_test_images_file, self.__test_imgs)
+            np.save(RingCameraConvnet.np_test_labels_file, self.__test_labels)
+
+    """
+    Compile the internal keras model from scratch
+    """
+    def compile_model(self, img_shape, num_outputs):
+        use_augmentation = True
+
+        data_augmentation = tf.keras.Sequential(
+            [
+                tf.keras.layers.RandomFlip('horizontal'),
+                #tf.keras.layers.RandomRotation(0.1),
+                #tf.keras.layers.RandomZoom(0.2)
+            ]
+        )
+
+        inputs = tf.keras.Input(shape=img_shape)
+        x = data_augmentation(inputs) if use_augmentation else inputs
+        x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
+        x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
+        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.Flatten()(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+
+        outputs = tf.keras.layers.Dense(num_outputs, activation='softmax')(x)
+
+        self.__model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+        self.__model.compile(
+            optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001),
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+
+    """
+    Load model from disk using the best epoch checkpoint
+    """
+    def load_model(self):
+        self.__model = tf.keras.models.load_model(RingCameraConvnet.keras_model_folder)
+
+    """
+    Train the model, and evaluate its performance on the test data
+    """
+    def train_and_evaluate(self):
+        self.__confirm_data_and_model_are_valid('Training')
+
+        if RingCameraConvnet.use_cpu:
+            tf.config.set_visible_devices([], 'GPU')
+        
+        # get the model and show a brief summary of it
+        print(self.__model.summary())
+        tf.keras.utils.plot_model(model=self.__model, to_file=str(RingCameraConvnet.model_folder_path / 'model.png'), show_shapes=True)
+
+        # train the model, allowing user CTRL-C to quit the process early
+        try:
+            self.__model.fit(
+                self.__train_imgs,
+                self.__train_labels,
+                validation_data=(self.__val_imgs, self.__val_labels),
+                epochs=200,
+                callbacks=[
+                    #tf.keras.callbacks.EarlyStopping(patience=15),
+                    tf.keras.callbacks.ModelCheckpoint(
+                        filepath=RingCameraConvnet.keras_model_folder,
+                        save_weights_only=False,
+                        save_best_only=True,
+                        monitor='val_accuracy',
+                        mode='max'
+                    ),
+                    tf.keras.callbacks.ReduceLROnPlateau(
+                        monitor='val_accuracy',
+                        factor=0.8,
+                        patience=4,
+                        min_lr=0.00005
+                    ),
+                    tf.keras.callbacks.TensorBoard(
+                        log_dir=os.path.abspath(str(RingCameraConvnet.model_folder_path / "tensorboard_logs"))
+                    )
+                ],
+                batch_size=64
+            )
+        except KeyboardInterrupt:
+            print(os.linesep + "Killed fit early via CTRL-C...")
+            pass
+
+        # load in the weights from the epoch with the maximum accuracy
+        # and evaluate the model on the test data
+        self.__model.load_weights(RingCameraConvnet.keras_model_folder).expect_partial()
+        loss, accuracy = self.__model.evaluate(
+            self.__test_imgs,
+            self.__test_labels,
             batch_size=64
         )
-    except KeyboardInterrupt:
-        print(os.linesep + "Killed fit early via CTRL-C...")
-        pass
+        print(f"Loss: {loss}, Accuracy: {accuracy}")
 
-    # load in the weights from the epoch with the maximum accuracy
-    # and evaluate the model on the test data
-    model.load_weights(keras_model_folder).expect_partial()
-    loss, accuracy = model.evaluate(
-        test_imgs,
-        test_labels,
-        batch_size=64
-    )
-    print(f"Loss: {loss}, Accuracy: {accuracy}")
+    """
+    Evaluate a trained model
+    """
+    def evaluate_only(self, show_predict_loop=False):
+        self.__confirm_model_is_loaded('Model evaluation')
 
-def evaluate_only(csv_path, show_predict_loop=False, force_reload_img=False):
-    train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels  = load_data(csv_path, force_reload_images=force_reload_img, max_images=max_images)
+        print(self.__model.summary())
 
-    # load the model from the best epoch checkpoint
-    model = tf.keras.models.load_model(keras_model_folder)
-    print(model.summary())
+        self.__model.evaluate(
+            self.__test_imgs,
+            self.__test_labels,
+            batch_size=64
+        )
 
-    model.evaluate(
-        test_imgs,
-        test_labels,
-        batch_size=64
-    )
+        # show the labeled sample for fun & confirming the labels are correct
+        if show_predict_loop:
+            image_review_ms = 1500
+            predictions = self.__model.predict(self.__test_imgs)
 
-    # show the labeled sample for fun & confirming the labels are correct
-    if show_predict_loop:
-        esc_key = 27
-        image_review_ms = 1500
-        label_dict = {k: v for k, v in enumerate(labels_to_consider)}
-        predictions = model.predict(test_imgs)
+            predictions = [tf.argmax(pred).numpy() for pred in predictions]
+            self.__report_on_mispredictions(predictions)
+
+            # loop over each prediction made on the test data
+            for idx, img in enumerate(self.__test_imgs):
+                int_label = predictions[idx]
+                label = self.__label_dict[int_label]
+
+                # show the image for a moment before moving on to the next
+                cv2.imshow(label, img)
+                keyPressed = cv2.waitKeyEx(image_review_ms) & 0xFF
+                if keyPressed == ESC_KEY:
+                    cv2.destroyAllWindows()
+                    break
+                cv2.destroyAllWindows()
+
+    """
+    Create prediciton(s) for a batch of images
+    """
+    def predict(self, images):
+        self.__confirm_model_is_loaded('Prediction')
+
+        # For small batches, use model.call
+        if images.shape[0] < 10:
+            predictions = self.__model(images)
+        else:
+            predictions = self.__model.predict(images)
 
         predictions = [tf.argmax(pred).numpy() for pred in predictions]
-        report_on_mispredictions(test_labels, predictions)
+        predictions = [self.__label_dict[int_pred] for int_pred in predictions]
+        return predictions
 
-        # loop over each prediction made on the test data
-        for idx, img in enumerate(test_imgs):
-            int_label = predictions[idx]
-            label = label_dict[int_label]
+    """
+    Create predictions for all images in a given folder which are not present in the labeled
+    csv file.  This effectively can be used to bootstrap training data by prediciting new labels.
+    All of the predicitons would need to have their labels confirmed before they can
+    be incorporated with the (train, val, test) set.
+    """
+    def prediction_on_unlabeled_data(self, img_folder):
+        self.__confirm_labeled_csv_is_defined('Prediction')
+        self.__confirm_data_and_model_are_valid('Predicition')
 
-            # show the image for a moment before moving on to the next
-            cv2.imshow(label, img)
-            keyPressed = cv2.waitKeyEx(image_review_ms) & 0xFF
-            if keyPressed == esc_key:
-                cv2.destroyAllWindows()
-                break
-            cv2.destroyAllWindows()
+        prediction_batch_size = 1000
 
-def report_on_mispredictions(test_labels, predictions):
-    mis_predicts = {}
-    label_dict = {k: v for k, v in enumerate(labels_to_consider)}
+        labeled_imgs = get_img_dict_from_csv(self.__labeled_images_csv)
+        all_img_paths = get_all_images_in_folder(img_folder)
+        all_img_paths = list(filter(lambda x: x not in labeled_imgs, all_img_paths))
+        total_imgs_to_predict = len(all_img_paths)
 
-    for idx, int_pred_label in enumerate(predictions):
-        int_expect_label = test_labels[idx]
-        if int_pred_label != int_expect_label:
-            str_pred_label = label_dict[int_pred_label]
-            str_expect_label = label_dict[int_expect_label]
+        # load the model from the best epoch checkpoint
+        print(self.__model.summary())
 
-            key = (str_expect_label, str_pred_label)
-            if key in mis_predicts:
-                mis_predicts[key] += 1
-            else:
-                mis_predicts[key] = 1
+        output_dict = {}
 
-    # sort by value, we want to see the most often mistakes first
-    mis_predicts = dict(sorted(mis_predicts.items(), key=lambda item: item[1], reverse=True))
+        # make predicitons on batches so we don't run out of memory!
+        total_batches = math.ceil(total_imgs_to_predict / prediction_batch_size)
+        for batch_num in range(0, total_batches):
+            print(f'Predicting batch [{batch_num + 1} / {total_batches}]...')
+            start_idx = batch_num * prediction_batch_size
+            end_idx = (batch_num + 1) * prediction_batch_size
+            batch_img_paths = all_img_paths[start_idx:end_idx]
+            batch_imgs = list(map(convert_img_to_tensor, batch_img_paths))
+            batch_imgs = np.array(batch_imgs)
+            predictions = self.__model.predict(batch_imgs)
 
-    for mp in mis_predicts.items():
-        comp = mp[0]
-        num = mp[1]
+            # loop over each prediction made on the test data
+            for idx, img_path in enumerate(batch_img_paths):
+                prediction = predictions[idx]
+                int_label = tf.argmax(prediction).numpy()
+                label = self.__label_dict[int_label]
+                output_dict[img_path] = label
 
-        expect = comp[0]
-        actual = comp[1]
-
-        print(f'{expect} predicted as {actual} {num} times...')
-
-def create_predictions_on_unlabeled_data(csv_path, img_folder):
-    prediction_batch_size = 1000
-
-    labeled_imgs = get_img_dict_from_csv(csv_path)
-    all_img_paths = get_all_images_in_folder(img_folder)
-    all_img_paths = list(filter(lambda x: x not in labeled_imgs, all_img_paths))
-    total_imgs_to_predict = len(all_img_paths)
-
-    # load the model from the best epoch checkpoint
-    model = tf.keras.models.load_model(keras_model_folder)
-    print(model.summary())
-
-    output_dict = {}
-    label_dict = {k: v for k, v in enumerate(labels_to_consider)}
-
-    # make predicitons on batches so we don't run out of memory!
-    total_batches = math.ceil(total_imgs_to_predict / prediction_batch_size)
-    for batch_num in range(0, total_batches):
-        print(f'Predicting batch [{batch_num + 1} / {total_batches}]...')
-        start_idx = batch_num * prediction_batch_size
-        end_idx = (batch_num + 1) * prediction_batch_size
-        batch_img_paths = all_img_paths[start_idx:end_idx]
-        batch_imgs = list(map(convert_img_to_tensor, batch_img_paths))
-        batch_imgs = np.array(batch_imgs)
-        predictions = model.predict(batch_imgs)
-
-        # loop over each prediction made on the test data
-        for idx, img_path in enumerate(batch_img_paths):
-            prediction = predictions[idx]
-            int_label = tf.argmax(prediction).numpy()
-            label = label_dict[int_label]
-            output_dict[img_path] = label
-
-    save_img_dict_to_csv(output_dict, 'unlabeled_imgs.csv')
+        save_img_dict_to_csv(output_dict, 'unlabeled_imgs.csv')
 
 if __name__ == '__main__':
     labeled_csv_path = './ring_camera/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
-    
-    #train_and_evaluate(labeled_csv_path, force_reload_images=False)
-    evaluate_only(labeled_csv_path, show_predict_loop=True, force_reload_img=False)
-    #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_camera/ring_data/sept_through_nov_2023/frames/400max')
+    net = RingCameraConvnet(labeled_csv_path)
+    #net.compile_model()
+    net.load_model()
+    net.load_data(force_reload_images=False)
+
+    #net.train_and_evaluate()
+    net.evaluate_only(show_predict_loop=True)
+    #net.predict_on_unlabeled_data('./ring_camera/ring_data/sept_through_nov_2023/frames/400max')

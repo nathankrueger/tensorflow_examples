@@ -18,6 +18,8 @@ from ring_doorbell import Ring, Auth, exceptions
 from oauthlib.oauth2 import MissingTokenError
 from gtts import gTTS
 
+from ring_camera_convnet import RingCameraConvnet
+
 # this is a critical parameter... the motion event vs. snaphot content update are
 # unfortunately asynchronous in ring's API.  if we set this param too large, then
 # the delay to report the prediciton witll be large, and effectively the inference 
@@ -39,9 +41,6 @@ callback_lock = Lock()
 # a dictionary of event label to list of tuples
 # each tuple is a pair of (function, (arg1, .. argN))
 callbacks_dict = {}
-
-cameras_to_listen_on = ['Garage Cam']
-#cameras_to_listen_on = ['Shop Floodlight Camera']
 
 def token_updated(token):
     cache_file.write_text(json.dumps(token))
@@ -76,42 +75,57 @@ def retrieve_image(camera_name):
         image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
         result = image
     except Exception as ex:
-        print('Failed to retrieve snapshot: {ex}')
+        print(f'Failed to retrieve snapshot: {ex}')
 
     return result
 
 def on_motion(event):
     print(f"Motion detected at {datetime.now()}")
     print(f"Event details: {event}")
-    
-    device_name = event.device_name
-    if event.kind == 'motion' and device_name in cameras_to_listen_on:
-        evt_queue.put(device_name)
+    evt_queue.put(event.device_name)
 
-def speak(text, tld='en'):
+def speak(evt, tld='en'):
+    label = evt[1]
+    device_name = evt[2]
+
+    text = f"There's a {label} at your {device_name}"
     with tempfile.NamedTemporaryFile() as tmpfile:
         try:
             gTTS(text=text, lang='en', tld=tld, slow=False).save(tmpfile.name)
             playsound.playsound(tmpfile.name)
-        except:
-            pass
+        except Exception as ex:
+            print(f'Failed to play sound {ex}')
 
 def callback_thread():
     while True:
-        callback_tup = callback_queue.get()
-        fn = callback_tup[0]
-        args = callback_tup[1]
+        # format is callback, img, label, device_name
+        q_item = callback_queue.get()
+        callback_fn_tup = q_item[0]
+        img = q_item[1]
+        label = q_item[2]
+        device_name = q_item[3]
+
+        # function args are optional
+        fn = callback_fn_tup[0]
+        if len(callback_fn_tup) == 1:
+            args = ((img, label, device_name),)
+        else:
+            args = callback_fn_tup[1]
+            args = ((img, label, device_name), *args)
+
+        # callback signature is expected to be (img, label, device_name), optional_args0, ... optional_argsN
         fn(*args)
 
 def predict_thread():
     global callback_lock
 
     # initialize the tensorflow model
-    model = tf.keras.models.load_model('ring_camera/ring_convnet_model/keras')
-    labels_to_consider = ['none', 'car', 'dog', 'turkey', 'deer', 'person']
-    img_height = model.input.shape[1]
-    img_width = model.input.shape[2]
-    label_dict = {k: v for k, v in enumerate(labels_to_consider)}
+    net = RingCameraConvnet()
+    net.load_model()
+    kerasmodel = net.get_model()
+
+    img_height = kerasmodel.input.shape[1]
+    img_width = kerasmodel.input.shape[2]
 
     while True:
         print('Waiting for next ring event...')
@@ -124,22 +138,22 @@ def predict_thread():
             continue
 
         img = resize_img(img, max(img_height, img_width))
-        prediction = model.predict(np.expand_dims(img, axis=0))
         imshow_queue.put(img)
-        int_label = tf.argmax(prediction[0]).numpy()
-        label = label_dict[int_label]
-        print(f'Prediction: {prediction}: {label}')
-
-        # Add our own default callback 
-        message_text = f"There's a {label} at your {device_name}"
-        callback_queue.put((speak, (message_text, 'ie')))
+        predicted_label = net.predict(np.expand_dims(img, axis=0))[0]
 
         # guard access to the callback dictionary
         with callback_lock:
-            if label in callbacks_dict:
-                callbacks_list = callbacks_dict[label]
-                for cb in callbacks_list:
-                    callback_queue.put(cb)
+            callbacks_to_run = []
+            if device_name in callbacks_dict:
+                callbacks_to_run += callbacks_dict[device_name]
+            
+            # None entries imply run for any camera type
+            if None in callbacks_dict:
+                callbacks_to_run += callbacks_dict[None]
+
+            # queue up any defined callbacks
+            for cb in callbacks_to_run:
+                callback_queue.put((cb, img, predicted_label, device_name))
 
 def initialize_ring(install_listener):
     if cache_file.is_file():
@@ -185,6 +199,26 @@ def main():
     # respond to any callbacks
     ct = Thread(target=callback_thread, daemon=True)
     ct.start()
+
+    evt_queue.put('Garage Cam')
+
+    # add some useful callbacks
+    with callback_lock:
+        # image name generator
+        def get_next_img():
+            i = 0
+            while True:
+                yield f'{i}.jpg'
+                i += 1
+
+        # add a callback which saves an image 0.jpg, 1.jpg, etc for each 'Garage Cam' event
+        callbacks_dict['Garage Cam'] = [(lambda args: cv2.imwrite('img.jpg', args[0]),)]
+
+        # add a callback which prints out whatever label was detected on any camera
+        callbacks_dict[None] = [(lambda args: print(f'{args[1].upper()} detected on {args[2]}'),)]
+
+        # add a callback which speaks whatever label was detected by any camera
+        callbacks_dict[None] += [(speak,('ie',))]
 
     # keep the main thread running to listen for image review events.
     # the cv2 library functions must be executed from the main thread.
