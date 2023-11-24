@@ -215,7 +215,7 @@ def split_data_into_groups_bucketize(img_dict, max_images=None, force_even_distr
     return train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels
 
 def get_compiled_model(img_shape, num_outputs):
-    use_augmentation = False
+    use_augmentation = True
 
     data_augmentation = tf.keras.Sequential(
         [
@@ -228,9 +228,12 @@ def get_compiled_model(img_shape, num_outputs):
     inputs = tf.keras.Input(shape=img_shape)
     x = data_augmentation(inputs) if use_augmentation else inputs
     x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
+    x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
     x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
     x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
+    x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
+    x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
     x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
     x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
@@ -410,15 +413,13 @@ def evaluate_only(csv_path, show_predict_loop=False, force_reload_img=False):
         label_dict = {k: v for k, v in enumerate(labels_to_consider)}
         predictions = model.predict(test_imgs)
 
+        predictions = [tf.argmax(pred).numpy() for pred in predictions]
+        report_on_mispredictions(test_labels, predictions)
+
         # loop over each prediction made on the test data
         for idx, img in enumerate(test_imgs):
-            prediction = predictions[idx]
-            int_label = tf.argmax(prediction).numpy()
+            int_label = predictions[idx]
             label = label_dict[int_label]
-
-            # review just the most troublesome, least common classes
-            #if label in ['car', 'none']:
-            #    continue
 
             # show the image for a moment before moving on to the next
             cv2.imshow(label, img)
@@ -427,6 +428,34 @@ def evaluate_only(csv_path, show_predict_loop=False, force_reload_img=False):
                 cv2.destroyAllWindows()
                 break
             cv2.destroyAllWindows()
+
+def report_on_mispredictions(test_labels, predictions):
+    mis_predicts = {}
+    label_dict = {k: v for k, v in enumerate(labels_to_consider)}
+
+    for idx, int_pred_label in enumerate(predictions):
+        int_expect_label = test_labels[idx]
+        if int_pred_label != int_expect_label:
+            str_pred_label = label_dict[int_pred_label]
+            str_expect_label = label_dict[int_expect_label]
+
+            key = (str_expect_label, str_pred_label)
+            if key in mis_predicts:
+                mis_predicts[key] += 1
+            else:
+                mis_predicts[key] = 1
+
+    # sort by value, we want to see the most often mistakes first
+    mis_predicts = dict(sorted(mis_predicts.items(), key=lambda item: item[1], reverse=True))
+
+    for mp in mis_predicts.items():
+        comp = mp[0]
+        num = mp[1]
+
+        expect = comp[0]
+        actual = comp[1]
+
+        print(f'{expect} predicted as {actual} {num} times...')
 
 def create_predictions_on_unlabeled_data(csv_path, img_folder):
     prediction_batch_size = 1000
@@ -466,6 +495,6 @@ def create_predictions_on_unlabeled_data(csv_path, img_folder):
 if __name__ == '__main__':
     labeled_csv_path = './ring_camera/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
     
-    train_and_evaluate(labeled_csv_path, force_reload_images=True)
-    #evaluate_only(labeled_csv_path, show_predict_loop=True, force_reload_img=False)
+    #train_and_evaluate(labeled_csv_path, force_reload_images=False)
+    evaluate_only(labeled_csv_path, show_predict_loop=True, force_reload_img=False)
     #create_predictions_on_unlabeled_data(labeled_csv_path, './ring_camera/ring_data/sept_through_nov_2023/frames/400max')
