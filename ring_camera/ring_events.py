@@ -200,8 +200,6 @@ def main():
     ct = Thread(target=callback_thread, daemon=True)
     ct.start()
 
-    evt_queue.put('Garage Cam')
-
     # add some useful callbacks
     with callback_lock:
         # image name generator
@@ -212,7 +210,7 @@ def main():
                 i += 1
 
         # add a callback which saves an image 0.jpg, 1.jpg, etc for each 'Garage Cam' event
-        callbacks_dict['Garage Cam'] = [(lambda args: cv2.imwrite('img.jpg', args[0]),)]
+        #callbacks_dict['Garage Cam'] = [(lambda args: cv2.imwrite('img.jpg', args[0]),)]
 
         # add a callback which prints out whatever label was detected on any camera
         callbacks_dict[None] = [(lambda args: print(f'{args[1].upper()} detected on {args[2]}'),)]

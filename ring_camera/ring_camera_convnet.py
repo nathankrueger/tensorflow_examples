@@ -5,7 +5,7 @@ import os, shutil, glob
 import csv
 import cv2
 
-from PIL import Image
+from itertools import repeat
 from pathlib import Path
 
 THIS_FOLDER_PATH = Path(os.path.dirname(__file__))
@@ -67,10 +67,14 @@ def get_num_unique_labels(all_labels):
     label_num = len(lbl_dict)
     return label_num
 
-def convert_img_to_tensor(img_path):
-    img = Image.open(img_path)
+def convert_img_to_tensor(img_path, img_size=None):
+    img = cv2.imread(img_path)
+    if img_size is not None:
+        # remove color channel for resizing if present
+        if len(img_size) == 3:
+            img_size = img_size[:2]
+        img = cv2.resize(img, img_size)
     img_tensor = tf.convert_to_tensor(img)
-    img_tensor = img_tensor.numpy().astype("float32") / 255
     return img_tensor
 
 def split_data_into_groups_seq(all_images, all_labels):
@@ -102,7 +106,7 @@ def split_data_into_groups_seq(all_images, all_labels):
 
     return (train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels)
 
-def split_data_into_groups_bucketize(img_dict, max_images=None, force_even_distribution=False):
+def split_data_into_groups_bucketize(img_dict, max_images=None, max_images_per_class=False, force_even_distribution=False):
     # test_percentage = 1 - (train_percentage + val_percentage)
     train_percentage = 0.6
     val_percentage = 0.2
@@ -139,6 +143,14 @@ def split_data_into_groups_bucketize(img_dict, max_images=None, force_even_distr
             random.shuffle(class_list)
             label_buckets_force_even_dist[label] = class_list[:min_rep_class]
         label_buckets = label_buckets_force_even_dist
+
+    if max_images_per_class:
+        label_buckets_per_class_limit = {}
+        for label in label_buckets:
+            class_list = label_buckets[label]
+            random.shuffle(class_list)
+            label_buckets_per_class_limit[label] = class_list[:max_images_per_class]
+        label_buckets = label_buckets_per_class_limit
 
     train_imgs = None
     train_labels = None
@@ -263,6 +275,7 @@ class RingCameraConvnet:
         self.__data_loaded = False
 
         self.__model = None
+        self.__conv_base = None
 
     def __confirm_data_is_loaded(self, ctx):
         if not self.__data_loaded:
@@ -310,7 +323,7 @@ class RingCameraConvnet:
             print(f'{expect} predicted as {actual} {num} times...')
 
     """
-    Return the keras model.  Use with caution.
+    Return the keras model -- use with caution
     """
     def get_model(self):
         return self.__model
@@ -318,7 +331,7 @@ class RingCameraConvnet:
     """
     Load data either from numpy array on disk (fast), or image files directly (slow)
     """
-    def load_data(self, force_reload_images=False, max_images=None, force_even_distribution=False):
+    def load_data(self, img_size=None, force_reload_images=False, max_images=None, max_images_per_class=None, force_even_distribution=False):
         # only allow load from file if we have all the necessary content
         all_files_on_disk = True
         for file in RingCameraConvnet.all_numpy_files:
@@ -342,14 +355,14 @@ class RingCameraConvnet:
             img_dict = get_img_dict_from_csv(self.__labeled_images_csv)
 
             # map labels to consider to integer values used by net
-            unique_labels = {str_label: int_label for int_label, str_label in enumerate(self.__label_dict)}
+            str_to_int_label_dict = {str_label: int_label for int_label, str_label in self.__label_dict.items()}
 
             # convert labels to integer values
-            img_dict = {img_path: unique_labels[str_label] for img_path, str_label in img_dict.items() if str_label in self.__label_dict}
+            img_dict = {img_path: str_to_int_label_dict[str_label] for img_path, str_label in img_dict.items() if str_label in str_to_int_label_dict}
 
             # get lists of equal order of (train, val, test) images and labels that are split by a requested percentage on a class by class
             # basis.  this way, if you ask for 60% training data, you'll get 60% of each class (which aren't going to be equally represented)
-            train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images, force_even_distribution)
+            train_imgs, train_labels, val_imgs, val_labels, test_imgs, test_labels = split_data_into_groups_bucketize(img_dict, max_images, max_images_per_class, force_even_distribution)
 
             # dump out histograms
             display_class_histogram(os.linesep + 'Histogram for training data:', train_imgs, img_dict, self.__label_dict)
@@ -358,9 +371,9 @@ class RingCameraConvnet:
 
             # convert list of images to list of tensors
             print(f'Coverting {len(train_imgs) + len(val_imgs) + len(test_imgs)} images to tensor...')
-            train_imgs = list(map(convert_img_to_tensor, train_imgs))
-            val_imgs = list(map(convert_img_to_tensor, val_imgs))
-            test_imgs = list(map(convert_img_to_tensor, test_imgs))
+            train_imgs = list(map(convert_img_to_tensor, train_imgs, repeat(img_size)))
+            val_imgs = list(map(convert_img_to_tensor, val_imgs, repeat(img_size)))
+            test_imgs = list(map(convert_img_to_tensor, test_imgs, repeat(img_size)))
 
             # convert lists to np array
             self.__train_imgs = np.array(train_imgs)
@@ -380,40 +393,134 @@ class RingCameraConvnet:
             np.save(RingCameraConvnet.np_test_labels_file, self.__test_labels)
 
     """
+    Sets the final convolution block 'trainable', makes assumptions about the shape / layer index of the model.
+    """
+    def configure_pretrained_model_for_finetuning(self):
+        # Pick a low learning rate such as to not alter the learned representations too much...
+        self.__model.optimizer.learning_rate.assign(1e-5)
+        self.__conv_base.trainable = True
+        for layer in self.__conv_base.layers[:-4]:
+            layer.trainable = False
+    
+    """
+    Compile a model which reuses a well trained convolutional base with a custom classifier
+    """
+    def compile_model_pretrained(self, img_shape=None):
+        use_augmentation = True
+
+        data_augmentation = tf.keras.layers.RandomFlip('horizontal')
+
+        self.__conv_base = tf.keras.applications.VGG16(include_top=False, weights='imagenet')
+        self.__conv_base.trainable = False
+
+        input_shape = None
+        if img_shape is None:
+            self.__confirm_data_is_loaded('Creating a model with no explicit input shape')
+            input_shape = self.__train_imgs[0].shape
+        else:
+            input_shape = img_shape
+        
+        # input layer
+        input_layer = tf.keras.layers.Input(shape=input_shape)
+
+        # optional data augmentation
+        x = data_augmentation(input_layer) if use_augmentation else input_layer
+
+        # preprocess the image tensors to what vgg prefers
+        x = tf.keras.applications.vgg16.preprocess_input(x)
+
+        # the main convolutional network
+        x = self.__conv_base(x)
+
+        # flatten to 1 dim
+        x = tf.keras.layers.Flatten()(x)
+
+        # apply drop-out to help with overfitting
+        x = tf.keras.layers.Dropout(0.5)(x)
+
+        # output layer
+        num_outputs = len(self.__label_dict)
+        output_layer = tf.keras.layers.Dense(num_outputs, activation='softmax')(x)
+
+        # create a model utilizing our feature-extraced conv network
+        self.__model = tf.keras.Model(input_layer, output_layer, name='pretrained_cnn_model')
+
+        self.__model.compile(
+            optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001, momentum=0.95),
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+
+    """
     Compile the internal keras model from scratch
     """
-    def compile_model(self, img_shape, num_outputs):
-        use_augmentation = True
+    def compile_model(self, img_shape=None, use_augmentation=False):
+        input_shape = None
+        use_resizing = False
+
+        if img_shape is None:
+            # if no explicit input shape is requested, there better be data to tell us how it should be sized!
+            self.__confirm_data_is_loaded('Creating a model with no explicit input shape')
+            input_shape = self.__train_imgs[0].shape
+        else:
+            if self.__data_loaded:
+                # we will use resizing if we can see that the loaded data does not match the requested size
+                use_resizing = self.__train_imgs[0].shape[:2] != img_shape[:2]
+                input_shape = self.__train_imgs[0].shape
+            else:
+                # if no data is loaded, make the input shape match the specification
+                input_shape = img_shape
 
         data_augmentation = tf.keras.Sequential(
             [
                 tf.keras.layers.RandomFlip('horizontal'),
                 #tf.keras.layers.RandomRotation(0.1),
-                #tf.keras.layers.RandomZoom(0.2)
-            ]
+                #tf.keras.layers.RandomZoom(0.2),
+                tf.keras.layers.RandomContrast(0.5)
+            ],
+            name='data_augmentation'
         )
 
-        inputs = tf.keras.Input(shape=img_shape)
-        x = data_augmentation(inputs) if use_augmentation else inputs
-        x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
+        inputs = tf.keras.layers.Input(shape=input_shape)
+        x = inputs
+
+        # resize things if need be
+        if use_resizing:
+            x = tf.keras.Sequential(
+                [
+                        tf.keras.layers.Resizing(*img_shape[:2]),
+                        tf.keras.layers.Rescaling(1./255)
+                ],
+                name='rescaling_and_resizing'
+            )(inputs)
+        
+        # augment data to increase resistance to overfitting if needed
+        if use_augmentation:
+            x = data_augmentation(x)
+
+        # convolutional layers
         x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
         x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
-        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
         x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
         x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, activation='relu')(x)
-        x = tf.keras.layers.Flatten()(x)
-        x = tf.keras.layers.Dropout(0.5)(x)
 
+        # ouput classification layer(s)
+        x = tf.keras.layers.Flatten()(x)
+        #x = tf.keras.layers.Dropout(0.5)(x)
+        #x = tf.keras.layers.Dense(64, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+        num_outputs = len(self.__label_dict)
         outputs = tf.keras.layers.Dense(num_outputs, activation='softmax')(x)
 
-        self.__model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        # define a keras model
+        self.__model = tf.keras.Model(inputs=inputs, outputs=outputs, name='turkeynet')
 
+        # compile the model with chosen loss metrics and optimizer algorithm
         self.__model.compile(
             optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001),
             loss='sparse_categorical_crossentropy',
@@ -458,7 +565,7 @@ class RingCameraConvnet:
                     tf.keras.callbacks.ReduceLROnPlateau(
                         monitor='val_accuracy',
                         factor=0.8,
-                        patience=4,
+                        patience=5,
                         min_lr=0.00005
                     ),
                     tf.keras.callbacks.TensorBoard(
@@ -472,8 +579,10 @@ class RingCameraConvnet:
             pass
 
         # load in the weights from the epoch with the maximum accuracy
-        # and evaluate the model on the test data
-        self.__model.load_weights(RingCameraConvnet.keras_model_folder).expect_partial()
+        self.load_model()
+
+        # evaluate the performance on the never-before-seen test data,
+        # measuring the inference capability of the model
         loss, accuracy = self.__model.evaluate(
             self.__test_imgs,
             self.__test_labels,
@@ -489,13 +598,15 @@ class RingCameraConvnet:
 
         print(self.__model.summary())
 
+        # evaluate the performance on the never-before-seen test data,
+        # measuring the inference capability of the model
         self.__model.evaluate(
             self.__test_imgs,
             self.__test_labels,
             batch_size=64
         )
 
-        # show the labeled sample for fun & confirming the labels are correct
+        # show the labeled sample for fun, confirming the inference is (mostly) correct
         if show_predict_loop:
             image_review_ms = 1500
             predictions = self.__model.predict(self.__test_imgs)
@@ -577,10 +688,19 @@ class RingCameraConvnet:
 if __name__ == '__main__':
     labeled_csv_path = './ring_camera/ring_data/sept_through_nov_2023/frames/400max/labeled_unique_0p999.csv'
     net = RingCameraConvnet(labeled_csv_path)
-    #net.compile_model()
-    net.load_model()
-    net.load_data(force_reload_images=False)
 
-    #net.train_and_evaluate()
-    net.evaluate_only(show_predict_loop=True)
+    #load in data
+    net.load_data(force_reload_images=True)
+
+    # create or load a model
+    net.compile_model(use_augmentation=True)
+    #net.compile_model_pretrained()
+    #net.load_model()
+
+    # train the model
+    net.train_and_evaluate()
+    #net.configure_pretrained_model_for_finetuning()
+
+    # conduct inference
+    #net.evaluate_only(show_predict_loop=True)
     #net.predict_on_unlabeled_data('./ring_camera/ring_data/sept_through_nov_2023/frames/400max')
