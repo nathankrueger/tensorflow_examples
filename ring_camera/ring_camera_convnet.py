@@ -499,20 +499,20 @@ class RingCameraConvnet:
             x = data_augmentation(x)
 
         # convolutional layers
-        x = tf.keras.layers.Conv2D(filters=32, kernel_size=5, activation='relu')(x)
+        x = tf.keras.layers.SeparableConv2D(filters=32, kernel_size=5, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=3)(x)
-        x = tf.keras.layers.Conv2D(filters=64, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.SeparableConv2D(filters=64, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-        x = tf.keras.layers.Conv2D(filters=128, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.SeparableConv2D(filters=128, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-        x = tf.keras.layers.Conv2D(filters=256, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.SeparableConv2D(filters=256, kernel_size=3, activation='relu')(x)
         x = tf.keras.layers.MaxPool2D(pool_size=2)(x)
-        x = tf.keras.layers.Conv2D(filters=512, kernel_size=3, activation='relu')(x)
+        x = tf.keras.layers.SeparableConv2D(filters=512, kernel_size=3, activation='relu')(x)
 
         # ouput classification layer(s)
         x = tf.keras.layers.Flatten()(x)
         #x = tf.keras.layers.Dropout(0.5)(x)
-        #x = tf.keras.layers.Dense(64, activation='relu')(x)
+        x = tf.keras.layers.Dense(64, activation='relu')(x)
         x = tf.keras.layers.Dropout(0.5)(x)
         num_outputs = len(self.__label_dict)
         outputs = tf.keras.layers.Dense(num_outputs, activation='softmax')(x)
@@ -522,7 +522,7 @@ class RingCameraConvnet:
 
         # compile the model with chosen loss metrics and optimizer algorithm
         self.__model.compile(
-            optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
             loss='sparse_categorical_crossentropy',
             metrics=['accuracy']
         )
@@ -552,7 +552,7 @@ class RingCameraConvnet:
                 self.__train_imgs,
                 self.__train_labels,
                 validation_data=(self.__val_imgs, self.__val_labels),
-                epochs=200,
+                epochs=100,
                 callbacks=[
                     #tf.keras.callbacks.EarlyStopping(patience=15),
                     tf.keras.callbacks.ModelCheckpoint(
@@ -566,7 +566,7 @@ class RingCameraConvnet:
                         monitor='val_accuracy',
                         factor=0.8,
                         patience=5,
-                        min_lr=0.00005
+                        min_lr=0.00001
                     ),
                     tf.keras.callbacks.TensorBoard(
                         log_dir=os.path.abspath(str(RingCameraConvnet.model_folder_path / "tensorboard_logs"))
@@ -690,10 +690,10 @@ if __name__ == '__main__':
     net = RingCameraConvnet(labeled_csv_path)
 
     #load in data
-    net.load_data(force_reload_images=True)
+    net.load_data(force_reload_images=False)
 
     # create or load a model
-    net.compile_model(use_augmentation=True)
+    net.compile_model(use_augmentation=True)#, img_shape=(169, 300, 3))
     #net.compile_model_pretrained()
     #net.load_model()
 
