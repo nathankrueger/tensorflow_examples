@@ -89,10 +89,13 @@ def speak(evt, tld='en'):
     device_name = evt[2]
 
     text = f"There's a {label} at your {device_name}"
-    with tempfile.NamedTemporaryFile() as tmpfile:
+    with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            gTTS(text=text, lang='en', tld=tld, slow=False).save(tmpfile.name)
-            playsound.playsound(tmpfile.name)
+            tmpfile = str(Path(tmpdir) / 'speakfile.mp3')
+            if os.name == 'nt':
+                tmpfile = tmpfile.replace('\\', '\\\\')
+            gTTS(text=text, lang='en', tld=tld, slow=False).save(tmpfile)
+            playsound.playsound(tmpfile)
         except Exception as ex:
             print(f'Failed to play sound {ex}')
 

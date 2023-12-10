@@ -111,7 +111,7 @@ def main():
         id = item['id']
 
         if int(id) > args.start_id:
-            date_key = dt.strftime('%Y-%m-%d %h-%m-%s')
+            date_key = dt.strftime('%Y-%m-%d %H-%M-%S')
             if date_key in items_by_day:
                 items_by_day[date_key].append(item)
             else:
