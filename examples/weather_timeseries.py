@@ -3,6 +3,11 @@ import numpy as np
 import os
 import shutil
 
+# For small batch sizes with RNN, CPU is much faster
+#tf.config.set_visible_devices([], 'GPU')
+
+tensorboard_logs_folder = os.path.join(os.path.dirname(__file__), 'tensorboard_logs')
+
 csv_fname = 'jena_climate_2009_2016.csv'
 csv_zip_fname = csv_fname + '.zip'
 csv_path = os.path.join(os.path.dirname(__file__), csv_fname)
@@ -14,8 +19,6 @@ if not os.path.exists(csv_path):
     os.system(f'unzip {csv_zip_fname}')
     shutil.move(csv_fname, csv_path)
     os.remove(csv_zip_fname)
-    if os.path.abspath(csv_fname) != os.path.abspath(csv_path):
-        os.remove(csv_fname)
 
 with open(csv_path) as f:
     data = f.read()
@@ -90,20 +93,47 @@ test_dataset = tf.keras.utils.timeseries_dataset_from_array(
     start_index=num_train_samples + num_val_samples
 )
 
-# simple RNN
-num_features = len(raw_data[0])
-inputs = tf.keras.layers.Input(shape=(None, num_features))
-x = tf.keras.layers.SimpleRNN(16, return_sequences=False)(inputs)
-#x = tf.keras.layers.SimpleRNN(16, return_sequences=True)(x)
-#x = tf.keras.layers.SimpleRNN(16)(x)
-x = tf.keras.layers.Dropout(rate=0.5)(x)
-outputs = tf.keras.layers.Dense(8)(x)
-model = tf.keras.Model(inputs=inputs, outputs=outputs)
-print(model.summary())
+def get_simple_rnn():
+    num_features = len(raw_data[0])
+    inputs = tf.keras.layers.Input(shape=(None, num_features))
+    x = tf.keras.layers.SimpleRNN(16, return_sequences=True, activation='tanh')(inputs)
+    x = tf.keras.layers.SimpleRNN(16, return_sequences=True, activation='tanh')(x)
+    x = tf.keras.layers.SimpleRNN(16, return_sequences=False, activation='tanh')(x)
+    x = tf.keras.layers.Dropout(rate=0.5)(x)
+    outputs = tf.keras.layers.Dense(1, activation=None)(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+    print(model.summary())
+    return model
 
+def get_ltsm(timesteps):
+    num_features = len(raw_data[0])
+    inputs = tf.keras.layers.Input(shape=(timesteps, num_features))
+    x = tf.keras.layers.LSTM(32, recurrent_dropout=0.25, return_sequences=False, activation='tanh')(inputs)
+    x = tf.keras.layers.Dropout(rate=0.5)(x)
+    outputs = tf.keras.layers.Dense(1, activation=None)(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+    print(model.summary())
+    return model  
+
+# simple RNN
+#model = get_simple_rnn()
+model = get_ltsm(sequence_length)
+
+# compile & train the model
 model.compile(optimizer='rmsprop', loss='mse', metrics=['mae'])
 model.fit(
-    train_dataset,
+    x=train_dataset,
     epochs=50,
-    validation_data=val_dataset
+    validation_data=val_dataset,
+    callbacks=[
+        tf.keras.callbacks.TensorBoard(
+            log_dir=os.path.abspath(tensorboard_logs_folder)
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_mae',
+            factor=0.5,
+            patience=2,
+            min_lr=0.00005
+        )
+    ]
 )
