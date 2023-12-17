@@ -10,11 +10,13 @@ ring_camera/tensorboard_logs/*
 *.jpg
 *.npy
 *.zip
+*.gz
 *workspace
 *.csv
 *.bak
 __pycache__
 **/*tensorboard_logs/*
+examples/aclImdb
 
 data_type_experiments.py
 pyplot_animation.py
