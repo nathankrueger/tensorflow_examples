@@ -14,6 +14,7 @@ ring_camera/tensorboard_logs/*
 *.csv
 *.bak
 __pycache__
+**/*tensorboard_logs/*
 
 data_type_experiments.py
 pyplot_animation.py
