@@ -5,8 +5,9 @@ from tensorflow.keras import layers
 import numpy as np
 import matplotlib.pyplot as plt
 
-print("TensowFlow version: " + tf.__version__)
-tf.config.set_visible_devices([], 'GPU')
+print(f"Tensorflow module locaiton: {tf.__file__}")
+print(f"TensowFlow version: {tf.__version__}")
+#tf.config.set_visible_devices([], 'GPU')
 
 num_epochs = 5
 batch_size = 128
