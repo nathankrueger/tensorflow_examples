@@ -488,8 +488,8 @@ class RingCameraConvnet:
         if use_resizing:
             x = tf.keras.Sequential(
                 [
-                        tf.keras.layers.Resizing(*img_shape[:2]),
-                        tf.keras.layers.Rescaling(1./255)
+                    tf.keras.layers.Resizing(*img_shape[:2]),
+                    tf.keras.layers.Rescaling(1./255)
                 ],
                 name='rescaling_and_resizing'
             )(inputs)
