@@ -282,6 +282,7 @@ def transformer_encoder_example():
     
     print(f'Test accuracy: {model.evaluate(int_test_ds)[1]:.3f}')
 
-#multihot_example()
-#word_embeddings_example()
-transformer_encoder_example()
+if __name__ == '__main__':
+    #multihot_example()
+    #word_embeddings_example()
+    transformer_encoder_example()
