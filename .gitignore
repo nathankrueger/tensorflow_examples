@@ -11,6 +11,7 @@ ring_camera/tensorboard_logs/*
 *.npy
 *.zip
 *.gz
+*.hdf5
 *workspace
 *.csv
 *.bak
