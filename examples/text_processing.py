@@ -184,8 +184,12 @@ A combined layer for creating positional encoded trained word embeddings
 class PositionalEmbedding(keras.layers.Layer):
     def __init__(self, sequence_length, input_dim, output_dim, **kwargs):
         super().__init__(**kwargs)
-        self.token_embeddings = keras.layers.Embedding(input_dim=input_dim, output_dim=output_dim)
-        self.position_embeddings = keras.layers.Embedding(input_dim=sequence_length, output_dim=output_dim)
+        self.token_embeddings = keras.layers.Embedding(
+            input_dim=input_dim, output_dim=output_dim, name='token_embeddings_layer'
+        )
+        self.position_embeddings = keras.layers.Embedding(
+            input_dim=sequence_length, output_dim=output_dim, name='position_embeddings_layer'
+        )
         self.sequence_length = sequence_length
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -214,7 +218,7 @@ class PositionalEmbedding(keras.layers.Layer):
         return config
 
 def transformer_encoder_example():
-    model_checkpt = 'transformer_encoder_model'
+    model_checkpt = 'transformer_encoder_model.hdf5'
     vocab_sz = 20000
     seq_len = 600
     embed_dim = 256
@@ -266,8 +270,7 @@ def transformer_encoder_example():
             epochs=20
         )
     except KeyboardInterrupt:
-        print()
-        pass
+        print(os.linesep)
 
     model = keras.models.load_model(
                                 model_checkpt,
