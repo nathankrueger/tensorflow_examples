@@ -2,6 +2,7 @@ import os, shutil, random
 from pathlib import Path
 import keras
 import tensorflow as tf
+from transfomers_for_text import TransformerEncoder, PositionalEmbedding
 
 # get the data
 #   wget https://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz
@@ -125,97 +126,6 @@ def word_embeddings_example(embed_sz=256):
     model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['accuracy'])
     model.summary()
     model.fit(int_train_ds, validation_data=int_val_ds, epochs=10)
-
-"""
-A simple demonstrative implementation of the Transformer defined in the seminal
-"Attention is all you need" paper by Vaswani et. al 2017 @ Google Brain
-"""
-class TransformerEncoder(keras.layers.Layer):
-    def __init__(self, embed_dim, dense_dim, num_heads, **kwargs):
-        super().__init__(**kwargs)
-        self.embed_dim = embed_dim
-        self.dense_dim = dense_dim
-        self.num_heads = num_heads
-        self.attention = keras.layers.MultiHeadAttention(
-            num_heads=num_heads, key_dim=embed_dim
-        )
-        self.dense_proj = keras.Sequential(
-            [
-                keras.layers.Dense(dense_dim, activation='relu'),
-                keras.layers.Dense(embed_dim)
-            ]
-        )
-        self.layernorm_1 = keras.layers.LayerNormalization()
-        self.layernorm_2 = keras.layers.LayerNormalization()
-
-    """
-    What does this layer do?  Hint: it's a composition...
-    """
-    def call(self, inputs, mask=None):
-        if mask is not None:
-            mask = mask[:, tf.newaxis, :]
-        attention_output = self.attention(
-            query=inputs,
-            key=inputs,
-            value=inputs,
-            attention_mask=mask
-        )
-        proj_input = self.layernorm_1(inputs + attention_output)
-        proj_output = self.dense_proj(proj_input)
-        return self.layernorm_2(proj_input + proj_output)
-    
-    """
-    By adding to the default layer config, we allow this layer to be
-    deserialized from calls to model.save() / keras.models.save_model() or
-    keras.models.load_model()
-    """
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            "embed_dim": self.embed_dim,
-            "num_heads": self.num_heads,
-            "dense_dim": self.dense_dim
-        })
-        return config
-
-"""
-A combined layer for creating positional encoded trained word embeddings
-"""
-class PositionalEmbedding(keras.layers.Layer):
-    def __init__(self, sequence_length, input_dim, output_dim, **kwargs):
-        super().__init__(**kwargs)
-        self.token_embeddings = keras.layers.Embedding(
-            input_dim=input_dim, output_dim=output_dim, name='token_embeddings_layer'
-        )
-        self.position_embeddings = keras.layers.Embedding(
-            input_dim=sequence_length, output_dim=output_dim, name='position_embeddings_layer'
-        )
-        self.sequence_length = sequence_length
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-
-    """
-    Pass the inputs through the word embeddings, then through the
-    position embeddings, return the sum of the two results.
-    """
-    def __call__(self, inputs):
-        length = tf.shape(inputs)[-1]
-        positions = tf.range(start=0, limit=length, delta=1)
-        embedded_tokens = self.token_embeddings(inputs)
-        embedded_positions = self.position_embeddings(positions)
-        return embedded_tokens + embedded_positions
-    
-    def compute_mask(self, inputs, mask=None):
-        return tf.math.not_equal(inputs, 0)
-    
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            "output_dim": self.output_dim,
-            "sequence_length": self.sequence_length,
-            "input_dim": self.input_dim
-        })
-        return config
 
 def transformer_encoder_example():
     model_checkpt = 'transformer_encoder_model.hdf5'
