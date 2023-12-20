@@ -14,6 +14,8 @@ import re
 import random
 import numpy as np
 from pathlib import Path
+from timeit import default_timer as timer
+from datetime import timedelta
 
 from transfomers_for_text import TransformerEncoder, TransformerDecoder, PositionalEmbedding
 
@@ -58,8 +60,8 @@ def custom_standardization(input_str):
     return tf.strings.regex_replace(lowercase, f'[{re.escape(strip_chars)}]', '')
 
 # some hyperparams
-vocab_sz = 20000
-seq_len = 20
+vocab_sz = 25000
+seq_len = 30
 batch_sz = 256
 
 source_vectorization = keras.layers.TextVectorization(
@@ -209,8 +211,9 @@ def simple_gru_example(load_model_if_available=True):
         print(f'[Output] Spanish: {decode_sequence(sentence)}')
 
 def transformer_seq2seq(load_model_if_available=True):
-    embed_dim = 512
-    dense_dim = 2048
+    modelckpt = 'transformer_seq2seq.hdf5'
+    embed_dim = 1024
+    dense_dim = 4096
     num_heads = 8
 
     # transformer encoder
@@ -245,8 +248,6 @@ def transformer_seq2seq(load_model_if_available=True):
     decoder_outputs = keras.layers.Dense(vocab_sz, activation='softmax')(x)
     transformer_model = keras.Model([encoder_inputs, decoder_inputs], decoder_outputs)
 
-    modelckpt = 'transformer_seq2seq.hdf5'
-
     train_ds = make_dataset(train_pairs)
     val_ds = make_dataset(val_pairs)
     test_ds = make_dataset(test_pairs)
@@ -259,7 +260,9 @@ def transformer_seq2seq(load_model_if_available=True):
 
     # dump out a nice graph
     keras.utils.plot_model(model=transformer_model, to_file=str(Path(os.path.dirname(__file__)) / 'seq2seq_transformer.png'), show_shapes=True)
+    print(transformer_model.summary())
 
+    # if requested, or the model doesn't exist on disk, train it!
     if not (load_model_if_available and os.path.exists(modelckpt)):
         try:
             transformer_model.fit(
@@ -278,7 +281,7 @@ def transformer_seq2seq(load_model_if_available=True):
                         mode='max'
                     ),
                     keras.callbacks.ReduceLROnPlateau(
-                        patience=2,
+                        patience=3,
                         factor=0.5,
                         montior='val_accuracy',
                         mode='max'
@@ -291,6 +294,7 @@ def transformer_seq2seq(load_model_if_available=True):
         except KeyboardInterrupt:
             print(os.linesep)
 
+    # load and evaluate the best model
     best_model = keras.models.load_model(
         modelckpt,
         custom_objects={
@@ -306,6 +310,7 @@ def transformer_seq2seq(load_model_if_available=True):
     spa_index_lookup = dict(zip(range(len(spa_vocab)), spa_vocab))
 
     def decode_sequence(input_sentence):
+        start = timer()
         tokenized_input_sentence = source_vectorization([input_sentence])
         decoded_sentence = '[start]'
         for i in range(seq_len):
@@ -316,6 +321,7 @@ def transformer_seq2seq(load_model_if_available=True):
             decoded_sentence += ' ' + sampled_token
             if sampled_token == '[end]':
                 break
+        print(f"Decoding sentence took {(timedelta(seconds=timer() - start).microseconds / 1000000.0):.3f}s")
         return decoded_sentence
     
     # a couple samples to generate predictions for
@@ -331,4 +337,4 @@ def transformer_seq2seq(load_model_if_available=True):
 
 if __name__ == '__main__':
     #simple_gru_example(load_model_if_available=False)
-    transformer_seq2seq(load_model_if_available=False)
+    transformer_seq2seq(load_model_if_available=True)
