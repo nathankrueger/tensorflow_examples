@@ -120,6 +120,14 @@ class TransformerDecoder(keras.layers.Layer):
         self.layernorm_3 = keras.layers.LayerNormalization()
         self.supports_masking = True
 
+    """
+    Generates a batch of matricies that look like this example with seq_len=5
+    [[1 0 0 0 0]
+     [1 1 0 0 0]
+     [1 1 1 0 0]
+     [1 1 1 1 0]
+     [1 1 1 1 1]]
+    """
     def get_causal_attention_mask(self, inputs):
         input_shape = tf.shape(inputs)
         batch_size, sequence_length = input_shape[0], input_shape[1]
