@@ -10,6 +10,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
 import keras
 import numpy as np
+import re
 from pathlib import Path
 
 from transfomers_for_text import TransformerDecoder, PositionalEmbedding
@@ -38,11 +39,22 @@ def get_dataset(
     batch_size: int=64,
     validation_split: float=0.2
 ):
+    # filter out comments
+    text = re.sub(r'<<[^>]+>>', r'', text)
+
+    sentences = []
+    matches = re.finditer(r'(?<=[\.!?\]])\s+(.+?[\.!?])', text, re.DOTALL)
+    for match in matches:
+        sentence = match[1]
+        if len(sentence.split()) > 1:
+            sentences.append(sentence)
+    print(f'Total sentences found: {len(sentences)}')
+
     # convert string data into tensor of shape (num_seq, seq_len)
     text_entries = []
-    total_entries = len(text) // seq_len
+    total_entries = len(sentences) // seq_len
     for i in range(total_entries):
-        text_entries.append(text[i*seq_len:(i+1)*seq_len])
+        text_entries.append(' '.join(sentences[i*seq_len:(i+1)*seq_len]))
     text_vectorization.adapt(text_entries)
 
     def prepare_text_dataset_for_generation(text_batch):
@@ -112,17 +124,19 @@ quick_test_params = LanguageModelParams(
 )
 
 accurate_test_params = LanguageModelParams(
-    seq_len=100,
+    seq_len=64,
     vocab_sz=30000,
     embed_dim=512,
     dense_dim=2048,
-    num_heads=6,
+    num_heads=8,
     num_decoders=3,
     validation_split=0.0
 )
 
 if __name__ == '__main__':
     load_model_if_available = False
+    continue_training = False
+    total_epochs = 500
     params = accurate_test_params
 
     # build the transformer encoder stack
@@ -150,10 +164,13 @@ if __name__ == '__main__':
 
     print(transformer_generative_model.summary())
 
+    # token index 0: MASK token (not a word) represented as ''
+    # token index 1: OOV (out of vocabulary) token represented as '[UNK]'
     text_vec_layer = keras.layers.TextVectorization(
         max_tokens=params.vocab_sz,
         output_mode='int',
-        output_sequence_length=params.seq_len
+        output_sequence_length=params.seq_len,
+        standardize='lower'
     )
     text_corpus = get_shakespearean_training_text(shakespearean_text_file)
     train_dataset, val_dataset = get_dataset(
@@ -166,20 +183,26 @@ if __name__ == '__main__':
     token_index = dict(enumerate(text_vec_layer.get_vocabulary()))
 
     monitor = 'val_accuracy' if params.validation_split > 0.0 else 'accuracy'
+    model_on_disk = os.path.exists(params.modelckpt)
 
-    def lr_scheduler(epoch, lr):
-        if epoch < 30:
-            return 0.001
-        else:
-            return 0.0005
+    # load in the model to continue training where we left off, if requested
+    if continue_training and model_on_disk:
+        # load the model
+        transformer_generative_model = keras.models.load_model(
+            filepath=params.modelckpt,
+            custom_objects={
+                "TransformerDecoder": TransformerDecoder,
+                "PositionalEmbedding": PositionalEmbedding
+            }
+        )       
 
     # if requested, or the model doesn't exist on disk, train it!
-    if not (load_model_if_available and os.path.exists(params.modelckpt)):
+    if not (load_model_if_available and model_on_disk) or continue_training:
         try:
             transformer_generative_model.fit(
                 train_dataset,
                 validation_data=val_dataset,
-                epochs=200,
+                epochs=total_epochs,
                 callbacks=[
                     keras.callbacks.TensorBoard(
                         log_dir='tensorboard_logs'
@@ -190,8 +213,10 @@ if __name__ == '__main__':
                         save_best_only=True,
                         monitor=monitor
                     ),
-                    keras.callbacks.LearningRateScheduler(
-                        schedule=lr_scheduler
+                    keras.callbacks.ReduceLROnPlateau(
+                        monitor=monitor,
+                        factor=0.5,
+                        patience=5
                     )
                 ]
             )
@@ -210,20 +235,13 @@ if __name__ == '__main__':
     # generate some texts
     default_prompt = 'I'
     temperature = 0.7
-    generate_len = 100
-    for _ in range(100):
+    for _ in range(5):
         print(os.linesep + '--- Sentence ---')
         sentence = default_prompt
         print(default_prompt, end=' ')
-        for i in range(generate_len):
-            i = min(i, params.seq_len - 1)
+        for i in range(params.seq_len):
             tokenized_sentence = text_vec_layer([sentence])
-
-            if len(tokenized_sentence) > params.seq_len:
-                end_idx = -params.seq_len
-            else:
-                end_idx = len(tokenized_sentence)
-            predictions = transformer_generative_model.predict(tokenized_sentence[:end_idx], verbose=0)
+            predictions = transformer_generative_model.predict(tokenized_sentence, verbose=0)
             next_token = sample_next(predictions[0, i, :], temperature=temperature)
             sampled_token = token_index[next_token]
             print(sampled_token, end=' ')

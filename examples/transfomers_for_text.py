@@ -96,7 +96,7 @@ class TransformerEncoder(keras.layers.Layer):
 A simple Transformer decoder
 """
 class TransformerDecoder(keras.layers.Layer):
-    def __init__(self, embed_dim, dense_dim, num_heads, dropout_amt, **kwargs):
+    def __init__(self, embed_dim, dense_dim, num_heads, dropout_amt=0.1, **kwargs):
         super().__init__(**kwargs)
         self.embed_dim = embed_dim
         self.dense_dim = dense_dim
@@ -180,7 +180,8 @@ class TransformerDecoder(keras.layers.Layer):
             {
                 "embed_dim": self.embed_dim,
                 "dense_dim": self.dense_dim,
-                "num_heads": self.num_heads
+                "num_heads": self.num_heads,
+                "dropout_amt": self.dropout_amt
             }
         )
         return config
