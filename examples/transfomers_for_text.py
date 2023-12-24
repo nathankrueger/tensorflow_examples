@@ -96,11 +96,12 @@ class TransformerEncoder(keras.layers.Layer):
 A simple Transformer decoder
 """
 class TransformerDecoder(keras.layers.Layer):
-    def __init__(self, embed_dim, dense_dim, num_heads, **kwargs):
+    def __init__(self, embed_dim, dense_dim, num_heads, dropout_amt, **kwargs):
         super().__init__(**kwargs)
         self.embed_dim = embed_dim
         self.dense_dim = dense_dim
         self.num_heads = num_heads
+        self.dropout_amt = dropout_amt
         self.attention_1 = keras.layers.MultiHeadAttention(
             num_heads=num_heads,
             key_dim=embed_dim
@@ -118,6 +119,8 @@ class TransformerDecoder(keras.layers.Layer):
         self.layernorm_1 = keras.layers.LayerNormalization()
         self.layernorm_2 = keras.layers.LayerNormalization()
         self.layernorm_3 = keras.layers.LayerNormalization()
+        self.dropout_1 = keras.layers.Dropout(self.dropout_amt)
+        self.dropout_2 = keras.layers.Dropout(self.dropout_amt)
         self.supports_masking = True
 
     """
@@ -158,14 +161,16 @@ class TransformerDecoder(keras.layers.Layer):
             value=inputs,
             attention_mask=causal_mask
         )
-        attention_output_1 = self.layernorm_1(inputs + attention_output_1)
+        attention_output_1 = self.dropout_1(inputs + attention_output_1)
+        attention_output_1 = self.layernorm_1(attention_output_1)
         attention_output_2 = self.attention_2(
             query=attention_output_1,
             key=encoder_outputs,
             value=encoder_outputs,
             attention_mask=padding_mask
         )
-        attention_output_2 = self.layernorm_2(attention_output_1 + attention_output_2)
+        attention_output_2 = self.dropout_2(attention_output_1 + attention_output_2)
+        attention_output_2 = self.layernorm_2(attention_output_2)
         proj_output = self.dense_proj(attention_output_2)
         return self.layernorm_3(attention_output_2 + proj_output)
 

@@ -56,12 +56,15 @@ def get_dataset(
     train_dataset = tf.data.Dataset.from_tensor_slices(text_entries[:num_train])
     train_dataset = train_dataset.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
     train_dataset = train_dataset.map(prepare_text_dataset_for_generation, num_parallel_calls=tf.data.AUTOTUNE)
-    train_dataset = train_dataset.shuffle(2048).prefetch(128).cache()
+    train_dataset = train_dataset.shuffle(4096).prefetch(128).cache()
 
-    val_dataset = tf.data.Dataset.from_tensor_slices(text_entries[num_train:])
-    val_dataset = val_dataset.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
-    val_dataset = val_dataset.map(prepare_text_dataset_for_generation, num_parallel_calls=tf.data.AUTOTUNE)
-    val_dataset = val_dataset.shuffle(2048).prefetch(128).cache()
+    if validation_split > 0.0:
+        val_dataset = tf.data.Dataset.from_tensor_slices(text_entries[num_train:])
+        val_dataset = val_dataset.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.map(prepare_text_dataset_for_generation, num_parallel_calls=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.shuffle(4096).prefetch(128).cache()
+    else:
+        val_dataset = None
 
     return train_dataset, val_dataset
 
@@ -73,20 +76,71 @@ def sample_next(predictions, temperature: float=1.0):
     probas = np.random.multinomial(1, predictions, 1)
     return np.argmax(probas)
 
-if __name__ == '__main__':
-    modelckpt = 'transformer_generative.hdf5'
-    seq_len = 128
-    vocab_sz = 30000
-    embed_dim = 512
-    dense_dim = 2048
-    num_heads = 8
-    num_decoders = 3
+class LanguageModelParams:
+    def __init__(
+            self,
+            seq_len: int=64,
+            vocab_sz: int=30000,
+            embed_dim: int=512,
+            dense_dim: int=2048,
+            num_heads: int=8,
+            num_decoders: int=3,
+            batch_size: int=64,
+            validation_split: float=0.5,
+            dropout_amt: float=0.1,
+            modelckpt: str='transformer_generative.hdf5'
+        ):
+        self.seq_len = seq_len
+        self.vocab_sz = vocab_sz
+        self.embed_dim = embed_dim
+        self.dense_dim = dense_dim
+        self.num_heads = num_heads
+        self.num_decoders = num_decoders
+        self.batch_size = batch_size
+        self.validation_split = validation_split
+        self.dropout_amt = dropout_amt
+        self.modelckpt = modelckpt
 
+quick_test_params = LanguageModelParams(
+    seq_len=32,
+    vocab_sz=20000,
+    embed_dim=256,
+    dense_dim=512,
+    num_heads=2,
+    num_decoders=1,
+    validation_split=0.0
+)
+
+accurate_test_params = LanguageModelParams(
+    seq_len=100,
+    vocab_sz=30000,
+    embed_dim=512,
+    dense_dim=2048,
+    num_heads=6,
+    num_decoders=3,
+    validation_split=0.0
+)
+
+if __name__ == '__main__':
+    load_model_if_available = False
+    params = accurate_test_params
+
+    # build the transformer encoder stack
     inputs = keras.Input(shape=(None,), dtype='int64')
-    x = PositionalEmbedding(sequence_length=seq_len, input_dim=vocab_sz, output_dim=embed_dim)(inputs)
-    for _ in range(num_decoders):
-        x = TransformerDecoder(embed_dim=embed_dim, dense_dim=dense_dim, num_heads=num_heads)(x, x)
-    outputs = keras.layers.Dense(vocab_sz, activation='softmax')(x)
+    x = PositionalEmbedding(
+        sequence_length=params.seq_len,
+        input_dim=params.vocab_sz,
+        output_dim=params.embed_dim
+    )(inputs)
+    for _ in range(params.num_decoders):
+        x = TransformerDecoder(
+            embed_dim=params.embed_dim,
+            dense_dim=params.dense_dim,
+            num_heads=params.num_heads,
+            dropout_amt=params.dropout_amt
+        )(x, x)
+
+    outputs = keras.layers.Dense(params.vocab_sz, activation='softmax')(x)
     transformer_generative_model = keras.Model(inputs, outputs)
     transformer_generative_model.compile(
         optimizer=keras.optimizers.RMSprop(learning_rate=0.001),
@@ -97,24 +151,30 @@ if __name__ == '__main__':
     print(transformer_generative_model.summary())
 
     text_vec_layer = keras.layers.TextVectorization(
-        max_tokens=vocab_sz,
+        max_tokens=params.vocab_sz,
         output_mode='int',
-        output_sequence_length=seq_len
+        output_sequence_length=params.seq_len
     )
     text_corpus = get_shakespearean_training_text(shakespearean_text_file)
-    token_index = dict(enumerate(text_vec_layer.get_vocabulary()))
     train_dataset, val_dataset = get_dataset(
                                     text_corpus,
                                     text_vec_layer,
-                                    seq_len,
-                                    batch_size=128,
-                                    validation_split=0.2
+                                    params.seq_len,
+                                    batch_size=params.batch_size,
+                                    validation_split=params.validation_split
                                 )
+    token_index = dict(enumerate(text_vec_layer.get_vocabulary()))
 
-    load_model_if_available = False
+    monitor = 'val_accuracy' if params.validation_split > 0.0 else 'accuracy'
+
+    def lr_scheduler(epoch, lr):
+        if epoch < 30:
+            return 0.001
+        else:
+            return 0.0005
 
     # if requested, or the model doesn't exist on disk, train it!
-    if not (load_model_if_available and os.path.exists(modelckpt)):
+    if not (load_model_if_available and os.path.exists(params.modelckpt)):
         try:
             transformer_generative_model.fit(
                 train_dataset,
@@ -125,19 +185,14 @@ if __name__ == '__main__':
                         log_dir='tensorboard_logs'
                     ),
                     keras.callbacks.ModelCheckpoint(
-                        filepath=modelckpt,
+                        filepath=params.modelckpt,
                         save_weights_only=False,
-                        save_best_only=True
+                        save_best_only=True,
+                        monitor=monitor
                     ),
-                    keras.callbacks.EarlyStopping(
-                        patience=10,
-                        monitor='val_accuracy'
-                    ),
-                    keras.callbacks.ReduceLROnPlateau(
-                        patience=3,
-                        factor=0.5,
-                        montior='val_accuracy'
-                    ),
+                    keras.callbacks.LearningRateScheduler(
+                        schedule=lr_scheduler
+                    )
                 ]
             )
         except KeyboardInterrupt:
@@ -145,13 +200,14 @@ if __name__ == '__main__':
     
     # load the model
     transformer_generative_model = keras.models.load_model(
-        modelckpt,
+        filepath=params.modelckpt,
         custom_objects={
             "TransformerDecoder": TransformerDecoder,
             "PositionalEmbedding": PositionalEmbedding
         }
     )
 
+    # generate some texts
     default_prompt = 'I'
     temperature = 0.7
     generate_len = 100
@@ -160,10 +216,16 @@ if __name__ == '__main__':
         sentence = default_prompt
         print(default_prompt, end=' ')
         for i in range(generate_len):
+            i = min(i, params.seq_len - 1)
             tokenized_sentence = text_vec_layer([sentence])
-            predictions = transformer_generative_model.predict(tokenized_sentence, verbose=0)
+
+            if len(tokenized_sentence) > params.seq_len:
+                end_idx = -params.seq_len
+            else:
+                end_idx = len(tokenized_sentence)
+            predictions = transformer_generative_model.predict(tokenized_sentence[:end_idx], verbose=0)
             next_token = sample_next(predictions[0, i, :], temperature=temperature)
             sampled_token = token_index[next_token]
             print(sampled_token, end=' ')
             sentence += " " + sampled_token
-        print(os.linesep)
+        print('')
