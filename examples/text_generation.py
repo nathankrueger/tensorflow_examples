@@ -39,7 +39,8 @@ def get_shakespearean_training_text(text_path):
 def get_dataset(
     text: str,
     text_vectorization: keras.layers.TextVectorization,
-    seq_len: int
+    seq_len: int,
+    batch_size: int=64
 ):
     batch_sz = 64
 
@@ -71,23 +72,27 @@ def sample_next(predictions, temperature: float=1.0):
     return np.argmax(probas)
 
 if __name__ == '__main__':
-    modelckpt = 'transformer_seq2seq.hdf5'
-    seq_len = 100
-    vocab_sz = 30000
-    embed_dim = 1024
+    modelckpt = 'transformer_generative.hdf5'
+    seq_len = 128
+    vocab_sz = 20000
+    embed_dim = 512
     dense_dim = 2048
-    num_heads = 6
+    num_heads = 8
+    num_decoders = 1
 
     inputs = keras.Input(shape=(None,), dtype='int64')
     x = PositionalEmbedding(sequence_length=seq_len, input_dim=vocab_sz, output_dim=embed_dim)(inputs)
-    x = TransformerDecoder(embed_dim=embed_dim, dense_dim=dense_dim, num_heads=num_heads)(x, x)
+    for _ in range(num_decoders):
+        x = TransformerDecoder(embed_dim=embed_dim, dense_dim=dense_dim, num_heads=num_heads)(x, x)
     outputs = keras.layers.Dense(vocab_sz, activation='softmax')(x)
     transformer_generative_model = keras.Model(inputs, outputs)
     transformer_generative_model.compile(
         optimizer=keras.optimizers.RMSprop(learning_rate=0.001),
-        metrics=['accuracy'],
-        loss='sparse_categorical_crossentropy'
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
     )
+
+    print(transformer_generative_model.summary())
 
     text_vec_layer = keras.layers.TextVectorization(
         max_tokens=vocab_sz,
@@ -95,7 +100,7 @@ if __name__ == '__main__':
         output_sequence_length=seq_len
     )
     text_corpus = get_shakespearean_training_text(shakespearean_text_file)
-    lm_dataset = get_dataset(text_corpus, text_vec_layer, seq_len)
+    lm_dataset = get_dataset(text_corpus, text_vec_layer, seq_len, batch_size=64)
     token_index = dict(enumerate(text_vec_layer.get_vocabulary()))
 
     load_model_if_available = False
@@ -105,50 +110,38 @@ if __name__ == '__main__':
         try:
             transformer_generative_model.fit(
                 lm_dataset,
-                epochs=50,
+                epochs=200,
                 callbacks=[
-                    keras.callbacks.ModelCheckpoint(
-                        filepath=modelckpt,
-                        save_weights_only=False,
-                        save_best_only=True
-                    ),
-                    keras.callbacks.EarlyStopping(
-                        patience=5,
-                        monitor='val_accuracy',
-                        mode='max'
-                    ),
-                    keras.callbacks.ReduceLROnPlateau(
-                        patience=3,
-                        factor=0.5,
-                        montior='val_accuracy',
-                        mode='max'
-                    ),
                     keras.callbacks.TensorBoard(
                         log_dir='tensorboard_logs'
-                    ),
+                    )
                 ]
             )
         except KeyboardInterrupt:
             print(os.linesep)
-
-    # load and evaluate the best model
-    best_model = keras.models.load_model(
-        modelckpt,
-        custom_objects={
-            "TransformerDecoder": TransformerDecoder,
-            "PositionalEmbedding": PositionalEmbedding
-        }
-    )
+        
+        transformer_generative_model.save(modelckpt)
+    else:
+        # load the model
+        transformer_generative_model = keras.models.load_model(
+            modelckpt,
+            custom_objects={
+                "TransformerDecoder": TransformerDecoder,
+                "PositionalEmbedding": PositionalEmbedding
+            }
+        )
 
     default_prompt = 'I'
     generate_len = 100
     for _ in range(100):
-        print('Generating context: ')
+        print(os.linesep + '--- Sentence ---')
         sentence = default_prompt
-        for i in range(seq_len - generate_len):
+        print(default_prompt, end=' ')
+        for i in range(generate_len):
             tokenized_sentence = text_vec_layer([sentence])
-            predictions = transformer_generative_model.predict(tokenized_sentence)
+            predictions = transformer_generative_model.predict(tokenized_sentence, verbose=0)
             next_token = sample_next(predictions[0, i, :])
             sampled_token = token_index[next_token]
+            print(sampled_token, end=' ')
             sentence += " " + sampled_token
-        print(sentence)
+        print(os.linesep)
