@@ -35,43 +35,57 @@ def get_shakespearean_training_text(text_path):
 def get_dataset(
     text: str,
     text_vectorization: keras.layers.TextVectorization,
-    seq_len: int,
     batch_size: int=64,
     validation_split: float=0.2
-):
-    # filter out comments
+) -> (tf.data.Dataset, tf.data.Dataset):
+    # filter out repeated legal disclaimer
     text = re.sub(r'<<[^>]+>>', r'', text)
 
+    # filter out newlines
+    text = re.sub(r'\n\s+', '', text)
+
+    # attempt to use regex to find complete sentences
     sentences = []
     matches = re.finditer(r'(?<=[\.!?\]])\s+(.+?[\.!?])', text, re.DOTALL)
     for match in matches:
         sentence = match[1]
         if len(sentence.split()) > 1:
             sentences.append(sentence)
-    print(f'Total sentences found: {len(sentences)}')
+    total_sentences = len(sentences)
+    print(f'Total sentences found: {total_sentences}')
 
-    # convert string data into tensor of shape (num_seq, seq_len)
-    text_entries = []
-    total_entries = len(sentences) // seq_len
-    for i in range(total_entries):
-        text_entries.append(' '.join(sentences[i*seq_len:(i+1)*seq_len]))
-    text_vectorization.adapt(text_entries)
+    # print out some metrics on sentence length
+    total_sentence_len = 0
+    for sentence in sentences:
+        total_sentence_len += len(sentence)
+    print(f'Avg. sentence len: {total_sentence_len / total_sentences}')
 
+    # teach the vocabulary
+    text_vectorization.adapt(sentences)
+
+    # function for producing vectorized inputs & outputs
     def prepare_text_dataset_for_generation(text_batch):
         vectorized_sequences = text_vectorization(text_batch)
+        # inputs start at the first token, and have the last token removed
         x = vectorized_sequences[:, :-1]
+
+        # outputs start at the second token, and include the last token
         y = vectorized_sequences[:, 1:]
+
+        # in this way, the outputs are shifted by one from the inputs,
+        # e.g. the i-th output (prediction) is the (i-1)-th input
         return x, y
     
-    num_train = int((1 - validation_split) * total_entries)
+    num_train = int((1 - validation_split) * total_sentences)
 
-    train_dataset = tf.data.Dataset.from_tensor_slices(text_entries[:num_train])
+    # convert string data into tensor of shape (num_seq, seq_len)
+    train_dataset = tf.data.Dataset.from_tensor_slices(sentences[:num_train])
     train_dataset = train_dataset.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
     train_dataset = train_dataset.map(prepare_text_dataset_for_generation, num_parallel_calls=tf.data.AUTOTUNE)
     train_dataset = train_dataset.shuffle(4096).prefetch(128).cache()
 
     if validation_split > 0.0:
-        val_dataset = tf.data.Dataset.from_tensor_slices(text_entries[num_train:])
+        val_dataset = tf.data.Dataset.from_tensor_slices(sentences[num_train:])
         val_dataset = val_dataset.batch(batch_size, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(prepare_text_dataset_for_generation, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.shuffle(4096).prefetch(128).cache()
@@ -80,6 +94,9 @@ def get_dataset(
 
     return train_dataset, val_dataset
 
+"""
+Sample the next token with a given amount of randomness aka 'temperature'
+"""
 def sample_next(predictions, temperature: float=1.0):
     predictions = np.asarray(predictions).astype('float64')
     predictions = np.log(predictions) / temperature
@@ -88,6 +105,9 @@ def sample_next(predictions, temperature: float=1.0):
     probas = np.random.multinomial(1, predictions, 1)
     return np.argmax(probas)
 
+"""
+Store intersting hyperparmeters
+"""
 class LanguageModelParams:
     def __init__(
             self,
@@ -124,13 +144,13 @@ quick_test_params = LanguageModelParams(
 )
 
 accurate_test_params = LanguageModelParams(
-    seq_len=64,
-    vocab_sz=30000,
+    seq_len=32,
+    vocab_sz=40000,
     embed_dim=512,
     dense_dim=2048,
-    num_heads=8,
-    num_decoders=3,
-    validation_split=0.0
+    num_heads=6,
+    num_decoders=4,
+    validation_split=0.3
 )
 
 if __name__ == '__main__':
@@ -140,12 +160,13 @@ if __name__ == '__main__':
     params = accurate_test_params
 
     # build the transformer encoder stack
-    inputs = keras.Input(shape=(None,), dtype='int64')
+    inputs = keras.Input(shape=(params.seq_len,), dtype='int64')
     x = PositionalEmbedding(
         sequence_length=params.seq_len,
         input_dim=params.vocab_sz,
         output_dim=params.embed_dim
     )(inputs)
+    x = keras.layers.Dropout(params.dropout_amt)(x)
     for _ in range(params.num_decoders):
         x = TransformerDecoder(
             embed_dim=params.embed_dim,
@@ -169,14 +190,13 @@ if __name__ == '__main__':
     text_vec_layer = keras.layers.TextVectorization(
         max_tokens=params.vocab_sz,
         output_mode='int',
-        output_sequence_length=params.seq_len,
+        output_sequence_length=params.seq_len + 1,
         standardize='lower'
     )
     text_corpus = get_shakespearean_training_text(shakespearean_text_file)
     train_dataset, val_dataset = get_dataset(
-                                    text_corpus,
-                                    text_vec_layer,
-                                    params.seq_len,
+                                    text=text_corpus,
+                                    text_vectorization=text_vec_layer,
                                     batch_size=params.batch_size,
                                     validation_split=params.validation_split
                                 )
@@ -194,7 +214,7 @@ if __name__ == '__main__':
                 "TransformerDecoder": TransformerDecoder,
                 "PositionalEmbedding": PositionalEmbedding
             }
-        )       
+        )
 
     # if requested, or the model doesn't exist on disk, train it!
     if not (load_model_if_available and model_on_disk) or continue_training:

@@ -121,6 +121,7 @@ class TransformerDecoder(keras.layers.Layer):
         self.layernorm_3 = keras.layers.LayerNormalization()
         self.dropout_1 = keras.layers.Dropout(self.dropout_amt)
         self.dropout_2 = keras.layers.Dropout(self.dropout_amt)
+        self.dropout_3 = keras.layers.Dropout(self.dropout_amt)
         self.supports_masking = True
 
     """
@@ -161,17 +162,18 @@ class TransformerDecoder(keras.layers.Layer):
             value=inputs,
             attention_mask=causal_mask
         )
-        attention_output_1 = self.dropout_1(inputs + attention_output_1)
-        attention_output_1 = self.layernorm_1(attention_output_1)
+        attention_output_1 = self.dropout_1(attention_output_1)
+        attention_output_1 = self.layernorm_1(inputs + attention_output_1)
         attention_output_2 = self.attention_2(
             query=attention_output_1,
             key=encoder_outputs,
             value=encoder_outputs,
             attention_mask=padding_mask
         )
-        attention_output_2 = self.dropout_2(attention_output_1 + attention_output_2)
-        attention_output_2 = self.layernorm_2(attention_output_2)
+        attention_output_2 = self.dropout_2(attention_output_2)
+        attention_output_2 = self.layernorm_2(attention_output_1 + attention_output_2)
         proj_output = self.dense_proj(attention_output_2)
+        proj_output = self.dropout_3(proj_output)
         return self.layernorm_3(attention_output_2 + proj_output)
 
     def get_config(self):
