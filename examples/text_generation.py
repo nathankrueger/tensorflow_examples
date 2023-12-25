@@ -17,6 +17,9 @@ from transfomers_for_text import TransformerDecoder, PositionalEmbedding
 
 base_dir = Path(os.path.dirname(__file__))
 
+END_OF_SENTENCE_TOKEN = '[end]'
+START_OF_SENTENCE_TOKEN = '[start]'
+
 # https://www.kaggle.com/datasets/kewagbln/shakespeareonline/data
 shakespearean_text_file = base_dir / 't8.shakespeare.txt'
 
@@ -50,7 +53,7 @@ def get_dataset(
     for match in matches:
         sentence = match[1]
         if len(sentence.split()) > 1:
-            sentences.append(sentence)
+            sentences.append(f'{START_OF_SENTENCE_TOKEN} {sentence} {END_OF_SENTENCE_TOKEN}')
     total_sentences = len(sentences)
     print(f'Total sentences found: {total_sentences}')
 
@@ -144,14 +147,14 @@ quick_test_params = LanguageModelParams(
 )
 
 accurate_test_params = LanguageModelParams(
-    seq_len=32,
+    seq_len=48,
     vocab_sz=30000,
     embed_dim=512,
     dense_dim=2048,
     num_heads=6,
-    num_decoders=6,
-    validation_split=0.3,
-    dropout_amt=0.1
+    num_decoders=4,
+    validation_split=0.0,
+    dropout_amt=0.5
 )
 
 if __name__ == '__main__':
@@ -237,7 +240,7 @@ if __name__ == '__main__':
                     keras.callbacks.ReduceLROnPlateau(
                         monitor=monitor,
                         factor=0.5,
-                        patience=5
+                        patience=3
                     )
                 ]
             )
@@ -254,17 +257,23 @@ if __name__ == '__main__':
     )
 
     # generate some fun texts
-    default_prompt = 'I'
+    default_prompt = START_OF_SENTENCE_TOKEN
     temperature = 0.7
-    for _ in range(5):
+    for _ in range(20):
         print(os.linesep + '--- Sentence ---')
         sentence = default_prompt
-        print(default_prompt, end=' ')
+
         for i in range(params.seq_len):
             tokenized_sentence = text_vec_layer([sentence])
             predictions = transformer_generative_model.predict(tokenized_sentence, verbose=0)
             next_token = sample_next(predictions[0, i, :], temperature=temperature)
             sampled_token = token_index[next_token]
-            print(sampled_token, end=' ')
+
+            if sampled_token == END_OF_SENTENCE_TOKEN:
+                break
+
+            print(sampled_token, end=' ')  
             sentence += " " + sampled_token
+        
+        # newline to separate sentences
         print('')
