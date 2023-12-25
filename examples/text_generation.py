@@ -145,12 +145,13 @@ quick_test_params = LanguageModelParams(
 
 accurate_test_params = LanguageModelParams(
     seq_len=32,
-    vocab_sz=40000,
+    vocab_sz=30000,
     embed_dim=512,
     dense_dim=2048,
     num_heads=6,
-    num_decoders=4,
-    validation_split=0.3
+    num_decoders=6,
+    validation_split=0.3,
+    dropout_amt=0.1
 )
 
 if __name__ == '__main__':
@@ -160,7 +161,7 @@ if __name__ == '__main__':
     params = accurate_test_params
 
     # build the transformer encoder stack
-    inputs = keras.Input(shape=(params.seq_len,), dtype='int64')
+    inputs = keras.Input(shape=(None,), dtype='int64')
     x = PositionalEmbedding(
         sequence_length=params.seq_len,
         input_dim=params.vocab_sz,
@@ -178,7 +179,7 @@ if __name__ == '__main__':
     outputs = keras.layers.Dense(params.vocab_sz, activation='softmax')(x)
     transformer_generative_model = keras.Model(inputs, outputs)
     transformer_generative_model.compile(
-        optimizer=keras.optimizers.RMSprop(learning_rate=0.001),
+        optimizer=keras.optimizers.RMSprop(learning_rate=0.0001),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
     )
@@ -190,7 +191,7 @@ if __name__ == '__main__':
     text_vec_layer = keras.layers.TextVectorization(
         max_tokens=params.vocab_sz,
         output_mode='int',
-        output_sequence_length=params.seq_len + 1,
+        output_sequence_length=params.seq_len,
         standardize='lower'
     )
     text_corpus = get_shakespearean_training_text(shakespearean_text_file)
@@ -252,7 +253,7 @@ if __name__ == '__main__':
         }
     )
 
-    # generate some texts
+    # generate some fun texts
     default_prompt = 'I'
     temperature = 0.7
     for _ in range(5):
